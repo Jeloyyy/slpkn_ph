@@ -18,6 +18,8 @@ export type PublicRoom = {
   winReason: WinReason | null;
   moveCount: number;
   version: number;
+  rematch: [boolean, boolean];
+  rematchSetup: boolean;
   youAre: Player | "spectator";
 };
 

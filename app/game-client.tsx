@@ -25,7 +25,7 @@ type Position = { row: number; col: number };
 type BoardCell = Piece | PublicPiece | null;
 type RoomCredentials = { token: string; player: Player };
 
-const ROOM_POLL_INTERVAL = 1500;
+const ROOM_POLL_INTERVAL = 800;
 
 function roomStorageKey(roomId: string) {
   return `slpkn-room:${roomId}`;
@@ -125,6 +125,10 @@ export default function GameClient() {
       : localActivePlayer;
   const isRotated = onlineRoom?.youAre === 2 || (!isOnline && activePlayer === 2);
   const currentPool = isOnline && onlineRoom ? onlineRoom.reserve : pools[activePlayer - 1];
+  const activeSetupPiece =
+    selectedPiece && currentPool[selectedPiece] > 0
+      ? selectedPiece
+      : PIECES.find((piece) => currentPool[piece.kind] > 0)?.kind ?? null;
   const placedCount = Object.values(currentPool).reduce((sum, count) => sum + count, 0);
   const activePlayerName =
     isOnline && onlineRoom
@@ -142,6 +146,13 @@ export default function GameClient() {
     ? onlineRoom?.players[gameWinner - 1] ?? playerName(gameWinner)
     : "";
   const winnerColor = gameWinner === 1 ? "White" : "Black";
+  const canRequestRematch = Boolean(onlineRoom && onlineRoom.youAre !== "spectator");
+  const ownRematchRequested = onlineRoom && onlineRoom.youAre !== "spectator"
+    ? onlineRoom.rematch[onlineRoom.youAre - 1]
+    : false;
+  const opponentRematchRequested = onlineRoom && onlineRoom.youAre !== "spectator"
+    ? onlineRoom.rematch[onlineRoom.youAre === 1 ? 1 : 0]
+    : false;
 
   function applyRoomSnapshot(room: PublicRoom) {
     const current = onlineRoomRef.current;
@@ -397,6 +408,73 @@ export default function GameClient() {
 
   async function sendOnlineAction(action: Record<string, unknown>) {
     if (!onlineRoom || !playerToken) return false;
+    const roomBeforeAction = onlineRoom;
+    const optimisticRoom: PublicRoom = {
+      ...onlineRoom,
+      board: onlineRoom.board.map((row) => [...row]),
+      reserve: { ...onlineRoom.reserve },
+    };
+    const row = action.row;
+    const col = action.col;
+    if (
+      action.type === "place" &&
+      Number.isInteger(row) &&
+      Number.isInteger(col) &&
+      (row as number) >= 0 &&
+      (row as number) < 8 &&
+      (col as number) >= 0 &&
+      (col as number) < 9
+    ) {
+      const piece = PIECES.find((item) => item.kind === action.kind);
+      if (piece && optimisticRoom.reserve[piece.kind] > 0) {
+        optimisticRoom.board[row as number][col as number] = {
+          kind: piece.kind,
+          owner: onlineRoom.youAre === 2 ? 2 : 1,
+        };
+        optimisticRoom.reserve[piece.kind] -= 1;
+      }
+    } else if (
+      action.type === "remove" &&
+      Number.isInteger(row) &&
+      Number.isInteger(col) &&
+      (row as number) >= 0 &&
+      (row as number) < 8 &&
+      (col as number) >= 0 &&
+      (col as number) < 9
+    ) {
+      const placed = optimisticRoom.board[row as number][col as number];
+      if (placed && "kind" in placed && placed.owner === onlineRoom.youAre) {
+        optimisticRoom.board[row as number][col as number] = null;
+        optimisticRoom.reserve[placed.kind] += 1;
+      }
+    } else if (
+      action.type === "move" &&
+      onlineRoom.youAre !== "spectator" &&
+      Number.isInteger(action.fromRow) &&
+      Number.isInteger(action.fromCol) &&
+      Number.isInteger(action.toRow) &&
+      Number.isInteger(action.toCol)
+    ) {
+      const fromRow = action.fromRow as number;
+      const fromCol = action.fromCol as number;
+      const toRow = action.toRow as number;
+      const toCol = action.toCol as number;
+      const attacker = optimisticRoom.board[fromRow]?.[fromCol];
+      const defender = optimisticRoom.board[toRow]?.[toCol];
+      if (
+        fromRow >= 0 && fromRow < 8 && fromCol >= 0 && fromCol < 9 &&
+        toRow >= 0 && toRow < 8 && toCol >= 0 && toCol < 9 &&
+        attacker && "kind" in attacker && attacker.owner === onlineRoom.youAre &&
+        defender?.owner !== onlineRoom.youAre
+      ) {
+        optimisticRoom.board[toRow][toCol] = attacker;
+        optimisticRoom.board[fromRow][fromCol] = null;
+      }
+    }
+    if (action.type === "place" || action.type === "remove" || action.type === "move") {
+      onlineRoomRef.current = optimisticRoom;
+      setOnlineRoom(optimisticRoom);
+    }
     setRoomLoading(true);
     try {
       const response = await fetch(`/api/rooms/${onlineRoom.roomId}/action`, {
@@ -419,9 +497,19 @@ export default function GameClient() {
       applyRoomSnapshot(room);
       setSelectedSquare(null);
       setRoomError("");
-      setNotice(room.phase === "playing" ? `${room.players[room.turn - 1]}'s turn.` : notice);
+      if (action.type === "place") playMoveSound();
+      setNotice(
+        action.type === "rematch" && room.phase === "finished"
+          ? "Rematch requested. Waiting for your opponent."
+          : action.type === "rematch" && room.rematchSetup
+            ? "Both players agreed. Your saved formations are ready to edit."
+          : room.phase === "playing"
+            ? `${room.players[room.turn - 1]}'s turn.`
+            : notice,
+      );
       return true;
     } catch (error) {
+      if (roomBeforeAction) applyRoomSnapshot(roomBeforeAction);
       setRoomError(error instanceof Error ? error.message : "Could not update the game.");
       return false;
     } finally {
@@ -484,12 +572,12 @@ export default function GameClient() {
       const piece = onlineRoom?.board[position.row][position.col];
       if (piece?.owner === activePlayer && "kind" in piece) {
         void sendOnlineAction({ type: "remove", row: position.row, col: position.col });
-      } else if (selectedPiece) {
+      } else if (activeSetupPiece) {
         void sendOnlineAction({
           type: "place",
           row: position.row,
           col: position.col,
-          kind: selectedPiece,
+          kind: activeSetupPiece,
         });
       } else {
         setNotice("Select a piece from your reserve before placing it.");
@@ -518,22 +606,19 @@ export default function GameClient() {
       setNotice("That square is occupied. Remove your own piece first.");
       return;
     }
-    if (!selectedPiece) {
+    if (!activeSetupPiece) {
       setNotice("Select a piece from your reserve before placing it.");
-      return;
-    }
-    if (currentPool[selectedPiece] < 1) {
-      setNotice("You have no more of that piece in your reserve.");
       return;
     }
 
     const nextBoard = board.map((row) => [...row]);
-    nextBoard[position.row][position.col] = { kind: selectedPiece, owner: activePlayer };
+    nextBoard[position.row][position.col] = { kind: activeSetupPiece, owner: activePlayer };
     const nextPools = pools.map((pool) => ({ ...pool }));
-    nextPools[activePlayer - 1][selectedPiece] -= 1;
+    nextPools[activePlayer - 1][activeSetupPiece] -= 1;
     setBoard(nextBoard);
     setPools(nextPools);
-    setNotice(`${pieceName(selectedPiece)} placed. Arrange your remaining forces.`);
+    playMoveSound();
+    setNotice(`${pieceName(activeSetupPiece)} placed. Arrange your remaining forces.`);
   }
 
   function finishSetup() {
@@ -686,6 +771,10 @@ export default function GameClient() {
     setNotice(`${playerName(activePlayer)} surrendered. ${playerName(winningPlayer)} wins!`);
   }
 
+  function requestRematch() {
+    void sendOnlineAction({ type: "rematch" });
+  }
+
   function displayPiece(piece: BoardCell) {
     if (!piece) return null;
     if ("hidden" in piece) {
@@ -722,11 +811,12 @@ export default function GameClient() {
               Array.from({ length: 9 }, (_, displayCol) => {
                 const position = toBoardPosition(displayRow, displayCol);
                 const piece = activeBoard[position.row][position.col] as BoardCell;
-                const isHiddenOpponent =
-                  piece &&
-                  ("hidden" in piece ||
-                    (isOnline && piece.owner !== activePlayer) ||
-                    (!isOnline && piece.owner !== activePlayer));
+                const isHiddenOpponent = piece && (
+                  "hidden" in piece ||
+                  (isOnline
+                    ? onlineRoom?.youAre === "spectator" || piece.owner !== onlineRoom?.youAre
+                    : piece.owner !== activePlayer)
+                );
                 const isSelected =
                   selectedSquare?.row === position.row && selectedSquare.col === position.col;
                 const isSetupZone = isSetup && (activePlayer === 1 ? position.row >= 5 : position.row <= 2);
@@ -1069,7 +1159,7 @@ export default function GameClient() {
         <aside className="game-sidebar">
           {isSetup ? (
             <>
-              <div className="sidebar-heading"><span className="eyebrow">YOUR RESERVE</span><h2>Build your army</h2><p>{isOnline ? `Set your private army, ${activePlayerName}. Only you can see your piece ranks.` : "Choose a piece, then tap a square in your three-row zone. Tap your placed pieces to return them."}</p></div>
+              <div className="sidebar-heading"><span className="eyebrow">YOUR RESERVE</span><h2>Build your army</h2><p>{isOnline ? onlineRoom?.rematchSetup ? "Your last formation is restored. Tap your own pieces to return them to reserve, adjust your setup, then confirm." : `Set your private army, ${activePlayerName}. Only you can see your piece ranks.` : "Choose a piece, then tap a square in your three-row zone. Tap your placed pieces to return them."}</p></div>
               {isOnline && onlineRoom?.visibility === "private" && inviteToken && (
                 <div className="invite-share-card">
                   <strong>Invite your opponent</strong>
@@ -1086,7 +1176,7 @@ export default function GameClient() {
                   if (available === 0) return null;
                   return (
                     <button
-                      className={`reserve-piece ${selectedPiece === piece.kind ? "reserve-selected" : ""}`}
+                      className={`reserve-piece ${activeSetupPiece === piece.kind ? "reserve-selected" : ""}`}
                       key={piece.kind}
                       type="button"
                       disabled={roomLoading || (isOnline && onlineRoom?.ready[activePlayer - 1])}
@@ -1108,7 +1198,7 @@ export default function GameClient() {
                 })}
               </div>
               <div className="setup-actions">
-                <div className="pass-device-note"><span>↻</span><p>{isOnline ? "Your army is hidden from your opponent. Confirm when you have placed all 21 pieces." : activePlayer === 1 ? "Your formation stays hidden when you pass the device." : "Player 1 is ready. Arrange your pieces, then begin."}</p></div>
+                <div className="pass-device-note"><span>↻</span><p>{isOnline ? onlineRoom?.rematchSetup ? "Your saved formation is loaded. Adjust any pieces you want, then confirm your army to start the rematch." : "Your army is hidden from your opponent. Confirm when you have placed all 21 pieces." : activePlayer === 1 ? "Your formation stays hidden when you pass the device." : "Player 1 is ready. Arrange your pieces, then begin."}</p></div>
                 <button className="button-primary button-full" type="button" onClick={finishSetup} disabled={!poolReady || roomLoading || Boolean(isOnline && onlineRoom?.ready[activePlayer - 1])}>
                   {isOnline && onlineRoom?.ready[activePlayer - 1] ? "Waiting for opponent" : isOnline ? "Confirm army" : activePlayer === 1 ? "Player 1 ready" : "Begin the match"} <span aria-hidden="true">↗</span>
                 </button>
@@ -1160,6 +1250,21 @@ export default function GameClient() {
                 {isOnline && <div><span>Room ID</span><strong>{onlineRoom?.roomId.slice(0, 10)}</strong></div>}
               </div>
               {screen === "finished" && !isOnline && <button className="button-primary button-full restart-button" type="button" onClick={startGame}>Play again <span aria-hidden="true">↗</span></button>}
+              {screen === "finished" && isOnline && canRequestRematch && (
+                <button
+                  className="button-primary button-full restart-button"
+                  type="button"
+                  onClick={requestRematch}
+                  disabled={roomLoading || ownRematchRequested}
+                >
+                  {ownRematchRequested
+                    ? "Waiting for opponent..."
+                    : opponentRematchRequested
+                      ? "Accept rematch"
+                      : "Restore armies for setup"}
+                  <span aria-hidden="true">↗</span>
+                </button>
+              )}
               {isOnline && <button className="button-secondary button-full restart-button" type="button" onClick={exitOnlineRoom}>Back to challenge rooms <span aria-hidden="true">↗</span></button>}
             </>
           )}
@@ -1197,9 +1302,25 @@ export default function GameClient() {
           <div className="victory-divider"><span>✦</span></div>
           <div className="victory-actions">
             {isOnline ? (
-              <button className="button-primary" type="button" onClick={exitOnlineRoom}>
-                Back to rooms <span aria-hidden="true">↗</span>
-              </button>
+              <>
+                {canRequestRematch && (
+                  <button
+                    className="button-primary"
+                    type="button"
+                    onClick={requestRematch}
+                    disabled={roomLoading || ownRematchRequested}
+                  >
+                    {ownRematchRequested
+                      ? "Waiting for opponent..."
+                      : opponentRematchRequested
+                        ? "Accept rematch"
+                        : "Restore armies for setup"}
+                  </button>
+                )}
+                <button className="victory-dismiss" type="button" onClick={exitOnlineRoom}>
+                  Back to rooms
+                </button>
+              </>
             ) : (
               <button className="button-primary" type="button" onClick={startGame}>
                 Play again <span aria-hidden="true">↗</span>

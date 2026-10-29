@@ -13,14 +13,17 @@ Open [http://localhost:3000](http://localhost:3000) to play.
 
 ## Online rooms
 
-Online rooms use Neon Postgres to store the board and validated moves. Both players' browsers poll for room changes every 1.5 seconds; the public challenge lobby refreshes every 4 seconds. No separate realtime provider is required.
+Online rooms use Neon Postgres to store the board and validated moves. Both players' browsers poll for room changes every 0.8 seconds; the public challenge lobby refreshes every 4 seconds. No separate realtime provider is required.
 
 1. Create a Neon project and copy its pooled connection string.
 2. Set `DATABASE_URL` in `.env.local` for local development and in the Vercel project's environment variables for deployment. `.env.example` shows the expected format.
-3. Run [`db/schema.sql`](./db/schema.sql) in the Neon SQL Editor to create or update the room table.
-4. Deploy the app. Players can then create public rooms for the challenge lobby or private rooms with invite links. Public matches can be watched without joining.
+3. Run [`db/schema.sql`](./db/schema.sql) in the Neon SQL Editor to create or update the room table. Re-run it after app updates that add database columns.
+4. Add a private `CRON_SECRET` environment variable in Vercel. Use a long random value; the daily cleanup job uses it to authorize its request.
+5. Deploy the app. Players can then create public rooms for the challenge lobby or private rooms with invite links. Public matches can be watched without joining.
 
-Players choose guest names; a random room credential is kept in that browser's local storage. Private invitation links grant access to the second seat, so only share those links with the intended opponent. Public spectators see identical markers for every piece on the board, plus the captured pieces displayed for each player. Private rooms are neither listed nor watchable.
+Players choose guest names; a random room credential is kept in that browser's local storage. Private invitation links grant access to the second seat, so only share those links with the intended opponent. Each player continues to see their own piece ranks during the opponent's turn; their opponent's ranks remain hidden. Public spectators see identical markers for every piece on the board, plus the captured pieces displayed for each player. After a match, both players can agree to rematch; the saved formations are restored to setup so either player can edit their own army and reconfirm before play starts. Private rooms are neither listed nor watchable.
+
+The daily Vercel Cron job removes up to 500 stale rooms per run: waiting, setup, and finished rooms after 24 hours without activity, and games still marked as playing after 7 days without activity. Current games remain available during that window.
 
 Online rooms are stored in the database, and guest identity is browser-local rather than account-based. Keep the Neon connection string on the server; do not expose it as a `NEXT_PUBLIC_` variable.
 

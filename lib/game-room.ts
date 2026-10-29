@@ -14,6 +14,8 @@ import {
 } from "@/app/game";
 import type { PublicRoom, RoomPhase, RoomSummary, RoomVisibility } from "@/app/room-types";
 
+type SetupPiece = { row: number; col: number; kind: PieceKind };
+
 export type RoomRow = {
   room_id: string;
   invite_token_hash: string;
@@ -27,8 +29,12 @@ export type RoomRow = {
   pool2: PieceCounts;
   captured1: PieceKind[];
   captured2: PieceKind[];
+  setup1: SetupPiece[] | null;
+  setup2: SetupPiece[] | null;
   ready1: boolean;
   ready2: boolean;
+  rematch1: boolean;
+  rematch2: boolean;
   phase: RoomPhase;
   turn: Player;
   winner: Player | null;
@@ -97,6 +103,12 @@ export function getPublicRoom(room: RoomRow, player: Player | "spectator"): Publ
     winReason: room.win_reason,
     moveCount: room.move_count,
     version: room.version,
+    rematch: [room.rematch1, room.rematch2],
+    rematchSetup:
+      room.phase === "setup" &&
+      room.move_count === 0 &&
+      room.setup1 !== null &&
+      room.setup2 !== null,
     youAre: player,
   };
 }
@@ -139,8 +151,12 @@ export async function updateRoom(room: RoomRow) {
         pool2 = ${JSON.stringify(room.pool2)}::jsonb,
         captured1 = ${JSON.stringify(room.captured1)}::jsonb,
         captured2 = ${JSON.stringify(room.captured2)}::jsonb,
+        setup1 = ${JSON.stringify(room.setup1)}::jsonb,
+        setup2 = ${JSON.stringify(room.setup2)}::jsonb,
         ready1 = ${room.ready1},
         ready2 = ${room.ready2},
+        rematch1 = ${room.rematch1},
+        rematch2 = ${room.rematch2},
         phase = ${room.phase},
         turn = ${room.turn},
         winner = ${room.winner},
@@ -174,8 +190,12 @@ export function createInitialRoom(
     pool2: createPieceCounts(),
     captured1: [],
     captured2: [],
+    setup1: null,
+    setup2: null,
     ready1: false,
     ready2: false,
+    rematch1: false,
+    rematch2: false,
     phase: "setup" as const,
     turn: 1 as const,
     winner: null,
@@ -204,16 +224,59 @@ export function applyRoomAction(room: RoomRow, player: Player, input: unknown): 
     return null;
   }
 
+  if (action.type === "rematch") {
+    if (room.phase !== "finished") return "The match is not finished.";
+    if (!room.setup1 || !room.setup2) return "Saved armies are not available for a rematch.";
+    if (player === 1) room.rematch1 = true;
+    else room.rematch2 = true;
+
+    if (room.rematch1 && room.rematch2) {
+      const board = createBoard();
+      for (const [owner, setup] of [[1, room.setup1], [2, room.setup2]] as const) {
+        for (const piece of setup) {
+          board[piece.row][piece.col] = { kind: piece.kind, owner };
+        }
+      }
+      room.board = board;
+      room.pool1 = createPieceCounts();
+      room.pool2 = createPieceCounts();
+      for (const piece of room.setup1) room.pool1[piece.kind] -= 1;
+      for (const piece of room.setup2) room.pool2[piece.kind] -= 1;
+      room.captured1 = [];
+      room.captured2 = [];
+      room.ready1 = false;
+      room.ready2 = false;
+      room.rematch1 = false;
+      room.rematch2 = false;
+      room.phase = "setup";
+      room.turn = 1;
+      room.winner = null;
+      room.win_reason = null;
+      room.move_count = 0;
+    }
+    return null;
+  }
+
   if (action.type === "ready") {
     if (room.phase !== "setup") return "Army setup is already complete.";
     if (player === 1) {
       if (room.ready1) return "You have already confirmed your army.";
       if (!allPiecesPlaced(room.pool1)) return "Place all your pieces before readying.";
       room.ready1 = true;
+      room.setup1 = room.board.flatMap((row, rowIndex) =>
+        row.flatMap((piece, col) =>
+          piece?.owner === 1 ? [{ row: rowIndex, col, kind: piece.kind }] : [],
+        ),
+      );
     } else {
       if (room.ready2) return "You have already confirmed your army.";
       if (!allPiecesPlaced(room.pool2)) return "Place all your pieces before readying.";
       room.ready2 = true;
+      room.setup2 = room.board.flatMap((row, rowIndex) =>
+        row.flatMap((piece, col) =>
+          piece?.owner === 2 ? [{ row: rowIndex, col, kind: piece.kind }] : [],
+        ),
+      );
     }
     if (room.ready1 && room.ready2) room.phase = "playing";
     return null;
