@@ -74,6 +74,45 @@ export default function GameClient() {
   const [copiedInvite, setCopiedInvite] = useState(false);
   const isRefreshing = useRef(false);
   const onlineRoomRef = useRef<PublicRoom | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  function playMoveSound() {
+    if (typeof window === "undefined" || !window.AudioContext) return;
+
+    try {
+      let context = audioContextRef.current;
+      if (!context || context.state === "closed") {
+        context = new window.AudioContext();
+        audioContextRef.current = context;
+      }
+
+      const playTone = () => {
+        const oscillator = context.createOscillator();
+        const volume = context.createGain();
+        const now = context.currentTime;
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(460, now);
+        oscillator.frequency.exponentialRampToValueAtTime(300, now + 0.07);
+        volume.gain.setValueAtTime(0.0001, now);
+        volume.gain.exponentialRampToValueAtTime(0.12, now + 0.008);
+        volume.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+        oscillator.connect(volume);
+        volume.connect(context.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.09);
+      };
+
+      if (context.state === "suspended") {
+        void context.resume().then(playTone).catch((error: unknown) => {
+          console.error("Could not play the move sound.", error);
+        });
+      } else {
+        playTone();
+      }
+    } catch (error) {
+      console.error("Could not play the move sound.", error);
+    }
+  }
 
   const isSetup = screen === "setup";
   const activePlayer =
@@ -107,6 +146,9 @@ export default function GameClient() {
   function applyRoomSnapshot(room: PublicRoom) {
     const current = onlineRoomRef.current;
     if (current?.roomId === room.roomId && current.version > room.version) return false;
+    if (current?.roomId === room.roomId && room.moveCount > current.moveCount) {
+      playMoveSound();
+    }
     onlineRoomRef.current = room;
     setOnlineRoom(room);
     setScreen(screenForRoom(room));
@@ -616,6 +658,7 @@ export default function GameClient() {
     setLocalCaptured(nextCaptured);
     setSelectedSquare(null);
     setMoveCount((count) => count + 1);
+    playMoveSound();
     const gameWinner = findWinner(nextBoard);
     if (gameWinner) {
       setWinner(gameWinner);
