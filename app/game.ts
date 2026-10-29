@@ -29,14 +29,14 @@ export const PIECES: {
 }[] = [
   { kind: "F", name: "Flag", symbol: "⚑", count: 1, rank: 0 },
   { kind: "P", name: "Private", symbol: "♟", count: 6, rank: 2 },
-  { kind: "S", name: "Spy", symbol: "♟", count: 2, rank: 1 },
+  { kind: "S", name: "Spy", symbol: "♙", count: 2, rank: 1 },
   { kind: "SGT", name: "Sergeant", symbol: "♜", count: 1, rank: 3 },
   { kind: "2LT", name: "2nd Lieutenant", symbol: "♞", count: 1, rank: 4 },
   { kind: "1LT", name: "1st Lieutenant", symbol: "♝", count: 1, rank: 5 },
   { kind: "CPT", name: "Captain", symbol: "♛", count: 1, rank: 6 },
   { kind: "MAJ", name: "Major", symbol: "♚", count: 1, rank: 7 },
-  { kind: "LTC", name: "Lieutenant Colonel", symbol: "♞", count: 1, rank: 8 },
-  { kind: "COL", name: "Colonel", symbol: "♜", count: 1, rank: 9 },
+  { kind: "LTC", name: "Lieutenant Colonel", symbol: "♘", count: 1, rank: 8 },
+  { kind: "COL", name: "Colonel", symbol: "♖", count: 1, rank: 9 },
   { kind: "G1", name: "1-Star General", symbol: "★", count: 1, rank: 10 },
   { kind: "G2", name: "2-Star General", symbol: "★★", count: 1, rank: 11 },
   { kind: "G3", name: "3-Star General", symbol: "★★★", count: 1, rank: 12 },
@@ -91,4 +91,26 @@ export function findWinner(board: Board): Player | null {
 
 export function pieceName(kind: PieceKind): string {
   return PIECES.find((piece) => piece.kind === kind)?.name ?? kind;
+}
+
+export function pieceImagePath(kind: PieceKind, owner: Player): string {
+  const assetNames: Record<PieceKind, string> = {
+    F: "flag",
+    P: "private",
+    S: "spy",
+    SGT: "sergeant",
+    "2LT": "2lt",
+    "1LT": "1lt",
+    CPT: "captain",
+    MAJ: "major",
+    LTC: "ltc",
+    COL: "colonel",
+    G1: "g1",
+    G2: "g2",
+    G3: "g3",
+    G4: "g4",
+    G5: "g5",
+  };
+  const color = owner === 1 ? "w" : "b";
+  return `/pieces/${color}${assetNames[kind]}.jpg`;
 }

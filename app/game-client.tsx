@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
 import {
   allPiecesPlaced,
   combatWinner,
@@ -8,15 +9,38 @@ import {
   createPieceCounts,
   findWinner,
   PIECES,
+  pieceImagePath,
   pieceName,
   type Board,
   type Piece,
   type PieceKind,
   type Player,
 } from "./game";
+import type { PublicPiece, PublicRoom, RoomSummary } from "./room-types";
 
-type Screen = "home" | "setup" | "playing" | "finished";
+type Screen = "home" | "rooms" | "join" | "setup" | "playing" | "finished" | "watching";
 type Position = { row: number; col: number };
+type BoardCell = Piece | PublicPiece | null;
+type RoomCredentials = { token: string; player: Player };
+
+const ROOM_POLL_INTERVAL = 1500;
+
+function roomStorageKey(roomId: string) {
+  return `slpkn-room:${roomId}`;
+}
+
+function screenForRoom(room: PublicRoom): Screen {
+  if (room.youAre === "spectator") return "watching";
+  if (room.phase === "setup") return "setup";
+  return room.phase;
+}
+
+function getErrorMessage(payload: unknown, fallback: string) {
+  return payload && typeof payload === "object" && "error" in payload &&
+    typeof payload.error === "string"
+    ? payload.error
+    : fallback;
+}
 
 function playerName(player: Player) {
   return `Player ${player}`;
@@ -26,22 +50,361 @@ export default function GameClient() {
   const [screen, setScreen] = useState<Screen>("home");
   const [board, setBoard] = useState<Board>(() => createBoard());
   const [pools, setPools] = useState(() => [createPieceCounts(), createPieceCounts()]);
-  const [activePlayer, setActivePlayer] = useState<Player>(1);
+  const [localActivePlayer, setLocalActivePlayer] = useState<Player>(1);
   const [selectedPiece, setSelectedPiece] = useState<PieceKind | null>(null);
   const [selectedSquare, setSelectedSquare] = useState<Position | null>(null);
   const [winner, setWinner] = useState<Player | null>(null);
   const [moveCount, setMoveCount] = useState(0);
   const [notice, setNotice] = useState("Choose a piece, then place it on your side of the board.");
+  const [guestName, setGuestName] = useState("");
+  const [onlineRoom, setOnlineRoom] = useState<PublicRoom | null>(null);
+  const [playerToken, setPlayerToken] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [roomList, setRoomList] = useState<RoomSummary[]>([]);
+  const [roomLoading, setRoomLoading] = useState(false);
+  const [roomError, setRoomError] = useState("");
+  const [pendingRoom, setPendingRoom] = useState<string | null>(null);
+  const [pendingInvite, setPendingInvite] = useState("");
+  const [isOnline, setIsOnline] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const isRefreshing = useRef(false);
+  const onlineRoomRef = useRef<PublicRoom | null>(null);
 
   const isSetup = screen === "setup";
-  const isRotated = activePlayer === 2;
-  const currentPool = pools[activePlayer - 1];
+  const activePlayer =
+    isOnline && onlineRoom
+      ? onlineRoom.youAre === "spectator"
+        ? onlineRoom.turn
+        : isSetup
+          ? onlineRoom.youAre
+          : onlineRoom.turn
+      : localActivePlayer;
+  const isRotated = onlineRoom?.youAre === 2 || (!isOnline && activePlayer === 2);
+  const currentPool = isOnline && onlineRoom ? onlineRoom.reserve : pools[activePlayer - 1];
   const placedCount = Object.values(currentPool).reduce((sum, count) => sum + count, 0);
+  const activePlayerName =
+    isOnline && onlineRoom
+      ? onlineRoom.players[activePlayer - 1] ?? playerName(activePlayer)
+      : playerName(activePlayer);
+  const currentMoveCount = isOnline && onlineRoom ? onlineRoom.moveCount : moveCount;
+  const gameWinner = isOnline && onlineRoom ? onlineRoom.winner : winner;
+
+  function applyRoomSnapshot(room: PublicRoom) {
+    const current = onlineRoomRef.current;
+    if (current?.roomId === room.roomId && current.version > room.version) return false;
+    onlineRoomRef.current = room;
+    setOnlineRoom(room);
+    setScreen(screenForRoom(room));
+    setSelectedSquare(null);
+    return true;
+  }
+
+  useEffect(() => {
+    let active = true;
+    const initialize = async () => {
+      await Promise.resolve();
+      if (!active) return;
+      const savedName = window.localStorage.getItem("slpkn-guest-name");
+      if (savedName) setGuestName(savedName);
+
+      const query = new URLSearchParams(window.location.search);
+      const roomId = query.get("room");
+      if (!roomId) return;
+      const invitation = query.get("invite") ?? "";
+      if (query.get("watch") === "1") {
+        void openSpectatorRoom(roomId);
+        return;
+      }
+
+      const rawCredentials = window.localStorage.getItem(roomStorageKey(roomId));
+      if (rawCredentials) {
+        try {
+          const credentials = JSON.parse(rawCredentials) as RoomCredentials;
+          if (typeof credentials.token === "string" && (credentials.player === 1 || credentials.player === 2)) {
+            const response = await fetch(`/api/rooms/${roomId}`, {
+              cache: "no-store",
+              headers: { Authorization: `Bearer ${credentials.token}` },
+            });
+            const result: unknown = await response.json();
+            if (!response.ok) throw new Error(getErrorMessage(result, "Could not open this room."));
+            const room = result as PublicRoom;
+            onlineRoomRef.current = room;
+            setOnlineRoom(room);
+            setPlayerToken(credentials.token);
+            setLocalActivePlayer(credentials.player);
+            setIsOnline(true);
+            setScreen(screenForRoom(room));
+            setNotice(room.phase === "playing" ? "The board is synced with the room." : "Set up your army.");
+            setInviteToken(
+              invitation ||
+                window.localStorage.getItem(`slpkn-invite:${roomId}`),
+            );
+            return;
+          }
+        } catch (error) {
+          window.localStorage.removeItem(roomStorageKey(roomId));
+          if (active) setRoomError(error instanceof Error ? error.message : "Could not open this room.");
+        }
+      }
+      if (!active) return;
+      if (invitation) {
+        setPendingRoom(roomId);
+        setPendingInvite(invitation);
+        setScreen("join");
+      } else {
+        setRoomError("Room credentials were not found on this device. Join again from the room invitation.");
+        setScreen("rooms");
+      }
+    };
+    void initialize();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (screen !== "rooms") return;
+    let active = true;
+    const loadRooms = async () => {
+      try {
+        const response = await fetch("/api/rooms", { cache: "no-store" });
+        const result: unknown = await response.json();
+        if (!response.ok) throw new Error(getErrorMessage(result, "Could not load rooms."));
+        if (active && Array.isArray(result)) setRoomList(result as RoomSummary[]);
+        if (active) setRoomError("");
+      } catch (error) {
+        if (active) setRoomError(error instanceof Error ? error.message : "Could not load rooms.");
+      }
+    };
+    void loadRooms();
+    const interval = window.setInterval(() => void loadRooms(), 4000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [screen]);
+
+  useEffect(() => {
+    if (!isOnline || !onlineRoom || screen === "rooms" || screen === "home" || screen === "join") return;
+    let active = true;
+    const refreshRoom = async () => {
+      if (isRefreshing.current) return;
+      isRefreshing.current = true;
+      try {
+        const watch = onlineRoom.youAre === "spectator";
+        const response = await fetch(
+          `/api/rooms/${onlineRoom.roomId}${watch ? "?watch=1" : ""}`,
+          {
+            cache: "no-store",
+            headers: playerToken ? { Authorization: `Bearer ${playerToken}` } : {},
+          },
+        );
+        const result: unknown = await response.json();
+        if (!response.ok) throw new Error(getErrorMessage(result, "Could not refresh the game."));
+        if (active) {
+          const nextRoom = result as PublicRoom;
+          setRoomError("");
+          if (nextRoom.version !== onlineRoom.version) {
+            applyRoomSnapshot(nextRoom);
+          }
+        }
+      } catch (error) {
+        if (active) setRoomError(error instanceof Error ? error.message : "Could not refresh the game.");
+      } finally {
+        isRefreshing.current = false;
+      }
+    };
+    const interval = window.setInterval(() => void refreshRoom(), ROOM_POLL_INTERVAL);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [isOnline, onlineRoom, playerToken, screen]);
+
+  async function openPlayerRoom(roomId: string, token: string) {
+    try {
+      const response = await fetch(`/api/rooms/${roomId}`, {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(getErrorMessage(result, "Could not open this room."));
+      const room = result as PublicRoom;
+      applyRoomSnapshot(room);
+      setPlayerToken(token);
+      setIsOnline(true);
+      setLocalActivePlayer(room.youAre === 2 ? 2 : 1);
+      setScreen(screenForRoom(room));
+      setSelectedPiece(null);
+      setSelectedSquare(null);
+      setRoomError("");
+      setNotice(room.phase === "playing" ? "The board is synced with the room." : "Set up your army.");
+      window.history.replaceState({}, "", `/?room=${encodeURIComponent(roomId)}`);
+    } catch (error) {
+      setRoomError(error instanceof Error ? error.message : "Could not open this room.");
+      setScreen("rooms");
+    }
+  }
+
+  async function openSpectatorRoom(roomId: string) {
+    try {
+      const response = await fetch(`/api/rooms/${roomId}?watch=1`, { cache: "no-store" });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(getErrorMessage(result, "Could not watch this room."));
+      const room = result as PublicRoom;
+      onlineRoomRef.current = room;
+      setOnlineRoom(room);
+      setPlayerToken(null);
+      setIsOnline(true);
+      setScreen("watching");
+      window.history.replaceState({}, "", `/?room=${encodeURIComponent(roomId)}&watch=1`);
+      setRoomError("");
+    } catch (error) {
+      setRoomError(error instanceof Error ? error.message : "Could not watch this room.");
+      setScreen("rooms");
+    }
+  }
+
+  function rememberGuest(name: string) {
+    const normalized = name.trim();
+    if (normalized.length < 1 || normalized.length > 24) {
+      setRoomError("Enter a name between 1 and 24 characters.");
+      return null;
+    }
+    window.localStorage.setItem("slpkn-guest-name", normalized);
+    setGuestName(normalized);
+    setRoomError("");
+    return normalized;
+  }
+
+  async function createOnlineRoom(visibility: "public" | "private") {
+    const name = rememberGuest(guestName);
+    if (!name) return;
+    setRoomLoading(true);
+    try {
+      const response = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, visibility }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(getErrorMessage(result, "Could not create a room."));
+      const room = result.room as PublicRoom;
+      const token = result.playerToken as string;
+      const invitation = result.inviteToken as string;
+      window.localStorage.setItem(roomStorageKey(room.roomId), JSON.stringify({ token, player: 1 }));
+      if (visibility === "private") {
+        window.localStorage.setItem(`slpkn-invite:${room.roomId}`, invitation);
+      }
+      setInviteToken(visibility === "private" ? invitation : null);
+      onlineRoomRef.current = room;
+      setOnlineRoom(room);
+      setPlayerToken(token);
+      setIsOnline(true);
+      setScreen("setup");
+      window.history.pushState(
+        {},
+        "",
+        visibility === "private"
+          ? `/?room=${room.roomId}&invite=${encodeURIComponent(invitation)}`
+          : `/?room=${room.roomId}`,
+      );
+    } catch (error) {
+      setRoomError(error instanceof Error ? error.message : "Could not create a room.");
+    } finally {
+      setRoomLoading(false);
+    }
+  }
+
+  async function joinRoom(roomId: string, invitation = "") {
+    const name = rememberGuest(guestName);
+    if (!name) return;
+    setRoomLoading(true);
+    try {
+      const response = await fetch(`/api/rooms/${roomId}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, inviteToken: invitation }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(getErrorMessage(result, "Could not join this room."));
+      const token = result.playerToken as string;
+      window.localStorage.setItem(roomStorageKey(roomId), JSON.stringify({ token, player: 2 }));
+      setPendingRoom(null);
+      setPendingInvite("");
+      await openPlayerRoom(roomId, token);
+    } catch (error) {
+      setRoomError(error instanceof Error ? error.message : "Could not join this room.");
+    } finally {
+      setRoomLoading(false);
+    }
+  }
+
+  async function sendOnlineAction(action: Record<string, unknown>) {
+    if (!onlineRoom || !playerToken) return false;
+    setRoomLoading(true);
+    try {
+      const response = await fetch(`/api/rooms/${onlineRoom.roomId}/action`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${playerToken}`,
+        },
+        body: JSON.stringify(action),
+      });
+      const result: unknown = await response.json();
+      if (response.status === 409) {
+        await openPlayerRoom(onlineRoom.roomId, playerToken);
+        setRoomError("");
+        setNotice("The room changed while your move was being sent. The board has been refreshed.");
+        return false;
+      }
+      if (!response.ok) throw new Error(getErrorMessage(result, "Could not update the game."));
+      const room = result as PublicRoom;
+      applyRoomSnapshot(room);
+      setSelectedSquare(null);
+      setRoomError("");
+      setNotice(room.phase === "playing" ? `${room.players[room.turn - 1]}'s turn.` : notice);
+      return true;
+    } catch (error) {
+      setRoomError(error instanceof Error ? error.message : "Could not update the game.");
+      return false;
+    } finally {
+      setRoomLoading(false);
+    }
+  }
+
+  function exitOnlineRoom() {
+    setIsOnline(false);
+    onlineRoomRef.current = null;
+    setOnlineRoom(null);
+    setPlayerToken(null);
+    setInviteToken(null);
+    setSelectedSquare(null);
+    setSelectedPiece(null);
+    setScreen("rooms");
+    window.history.pushState({}, "", "/");
+  }
+
+  async function copyInvitation() {
+    if (!onlineRoom || !inviteToken) return;
+    const url = new URL("/", window.location.origin);
+    url.searchParams.set("room", onlineRoom.roomId);
+    url.searchParams.set("invite", inviteToken);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setCopiedInvite(true);
+      window.setTimeout(() => setCopiedInvite(false), 1800);
+    } catch (error) {
+      setRoomError(error instanceof Error ? `Could not copy invitation link: ${error.message}` : "Could not copy invitation link.");
+    }
+  }
 
   function startGame() {
+    setIsOnline(false);
+    setOnlineRoom(null);
+    setPlayerToken(null);
     setBoard(createBoard());
     setPools([createPieceCounts(), createPieceCounts()]);
-    setActivePlayer(1);
+    setLocalActivePlayer(1);
     setSelectedPiece(null);
     setSelectedSquare(null);
     setWinner(null);
@@ -57,6 +420,23 @@ export default function GameClient() {
   }
 
   function onSetupSquare(position: Position) {
+    if (isOnline) {
+      const piece = onlineRoom?.board[position.row][position.col];
+      if (piece?.owner === activePlayer && "kind" in piece) {
+        void sendOnlineAction({ type: "remove", row: position.row, col: position.col });
+      } else if (selectedPiece) {
+        void sendOnlineAction({
+          type: "place",
+          row: position.row,
+          col: position.col,
+          kind: selectedPiece,
+        });
+      } else {
+        setNotice("Select a piece from your reserve before placing it.");
+      }
+      return;
+    }
+
     const piece = board[position.row][position.col];
     if (piece?.owner === activePlayer) {
       const nextBoard = board.map((row) => [...row]);
@@ -97,22 +477,66 @@ export default function GameClient() {
   }
 
   function finishSetup() {
+    if (isOnline) {
+      setSelectedPiece(null);
+      void sendOnlineAction({ type: "ready" });
+      return;
+    }
     if (!allPiecesPlaced(currentPool)) {
       setNotice(`Place all your pieces before continuing. ${placedCount} remaining.`);
       return;
     }
     setSelectedPiece(null);
     if (activePlayer === 1) {
-      setActivePlayer(2);
+      setLocalActivePlayer(2);
       setNotice("Player 1 is ready. Pass the device to Player 2 to arrange their army.");
       return;
     }
-    setActivePlayer(1);
+    setLocalActivePlayer(1);
     setScreen("playing");
     setNotice("Both armies are ready. Player 1 moves first.");
   }
 
   function onGameSquare(position: Position) {
+    if (isOnline && onlineRoom?.youAre !== "spectator") {
+      const piece = onlineRoom?.board[position.row][position.col] ?? null;
+      if (!selectedSquare) {
+        if (piece && piece.owner === activePlayer && "kind" in piece) {
+          setSelectedSquare(position);
+          setNotice(`${pieceName(piece.kind)} selected. Choose an adjacent square.`);
+        } else {
+          setNotice("Select one of your own pieces to move.");
+        }
+        return;
+      }
+      if (piece?.owner === activePlayer) {
+        if ("kind" in piece) {
+          setSelectedSquare(position);
+          setNotice(`${pieceName(piece.kind)} selected. Choose an adjacent square.`);
+        }
+        return;
+      }
+      const rowDistance = Math.abs(position.row - selectedSquare.row);
+      const colDistance = Math.abs(position.col - selectedSquare.col);
+      if (Math.max(rowDistance, colDistance) !== 1) {
+        setSelectedSquare(null);
+        setNotice("Pieces move one square in any direction, including diagonally.");
+        return;
+      }
+      void sendOnlineAction({
+        type: "move",
+        fromRow: selectedSquare.row,
+        fromCol: selectedSquare.col,
+        toRow: position.row,
+        toCol: position.col,
+      });
+      return;
+    }
+    if (isOnline) {
+      setNotice("Spectators can watch the match but cannot move pieces.");
+      return;
+    }
+
     const piece = board[position.row][position.col];
     if (!selectedSquare) {
       if (piece?.owner === activePlayer) {
@@ -173,29 +597,43 @@ export default function GameClient() {
       return;
     }
     const nextPlayer: Player = activePlayer === 1 ? 2 : 1;
-    setActivePlayer(nextPlayer);
+    setLocalActivePlayer(nextPlayer);
     setNotice(`${battleNotice} ${playerName(nextPlayer)}'s turn.`);
   }
 
   function surrender() {
+    if (isOnline) {
+      void sendOnlineAction({ type: "surrender" });
+      return;
+    }
     const winningPlayer: Player = activePlayer === 1 ? 2 : 1;
     setWinner(winningPlayer);
     setScreen("finished");
     setNotice(`${playerName(activePlayer)} surrendered. ${playerName(winningPlayer)} wins!`);
   }
 
-  function displayPiece(piece: Piece | null) {
+  function displayPiece(piece: BoardCell) {
     if (!piece) return null;
+    if ("hidden" in piece) {
+      return <span className="piece-hidden spectator-piece" aria-label="Hidden piece" />;
+    }
     const definition = PIECES.find((item) => item.kind === piece.kind);
     return (
-      <span className={`piece-face player-${piece.owner}`} aria-hidden="true">
-        <span className="piece-symbol">{definition?.symbol}</span>
-        <span className="piece-code">{piece.kind}</span>
-      </span>
+      <Image
+        className="piece-image"
+        src={pieceImagePath(piece.kind, piece.owner)}
+        alt=""
+        width={123}
+        height={74}
+        title={definition?.name}
+        draggable={false}
+      />
     );
   }
 
   function renderBoard() {
+    const activeBoard = isOnline && onlineRoom ? onlineRoom.board : board;
+    const isSpectator = isOnline && onlineRoom?.youAre === "spectator";
     return (
       <div className="board-frame">
         <div className="board-coordinate board-top" aria-hidden="true">
@@ -209,15 +647,23 @@ export default function GameClient() {
             {Array.from({ length: 8 }, (_, displayRow) =>
               Array.from({ length: 9 }, (_, displayCol) => {
                 const position = toBoardPosition(displayRow, displayCol);
-                const piece = board[position.row][position.col];
-                const isHiddenOpponent = piece && piece.owner !== activePlayer;
+                const piece = activeBoard[position.row][position.col] as BoardCell;
+                const isHiddenOpponent =
+                  piece &&
+                  ("hidden" in piece ||
+                    (isOnline && piece.owner !== activePlayer) ||
+                    (!isOnline && piece.owner !== activePlayer));
                 const isSelected =
                   selectedSquare?.row === position.row && selectedSquare.col === position.col;
                 const isSetupZone = isSetup && (activePlayer === 1 ? position.row >= 5 : position.row <= 2);
                 const squareLabel = piece
-                  ? isHiddenOpponent
-                    ? `Opponent piece at row ${position.row + 1}, column ${position.col + 1}`
-                    : `${playerName(piece.owner)} ${pieceName(piece.kind)} at row ${position.row + 1}, column ${position.col + 1}`
+                  ? isSpectator
+                    ? `Hidden piece at row ${position.row + 1}, column ${position.col + 1}`
+                    : isHiddenOpponent
+                      ? `Opponent piece at row ${position.row + 1}, column ${position.col + 1}`
+                      : "kind" in piece
+                        ? `${playerName(piece.owner)} ${pieceName(piece.kind)} at row ${position.row + 1}, column ${position.col + 1}`
+                        : `Hidden piece at row ${position.row + 1}, column ${position.col + 1}`
                   : `Empty square at row ${position.row + 1}, column ${position.col + 1}`;
                 return (
                   <button
@@ -231,9 +677,17 @@ export default function GameClient() {
                     type="button"
                     role="gridcell"
                     aria-label={squareLabel}
-                    onClick={() =>
-                      isSetup ? onSetupSquare(position) : onGameSquare(position)
-                    }
+                    title={piece
+                      ? isSpectator
+                        ? "Hidden piece"
+                        : isHiddenOpponent
+                          ? "Opponent piece — rank hidden"
+                          : "kind" in piece
+                            ? pieceName(piece.kind)
+                            : "Hidden piece"
+                      : undefined}
+                    disabled={isOnline && roomLoading}
+                    onClick={() => isSetup ? onSetupSquare(position) : onGameSquare(position)}
                   >
                     {isHiddenOpponent ? (
                       <span className="piece-hidden" aria-hidden="true">✦</span>
@@ -256,6 +710,129 @@ export default function GameClient() {
     );
   }
 
+  if (screen === "rooms" || screen === "join") {
+    const isJoin = screen === "join";
+    return (
+      <main className="site-shell rooms-shell">
+        <header className="site-header">
+          <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setScreen("home"); }} aria-label="SLPKN PH home">
+            <span className="brand-mark">S</span><span>SLPKN <b>PH</b></span>
+          </a>
+          <nav className="header-nav" aria-label="Main navigation">
+            <button type="button" className="header-home" onClick={() => setScreen("home")}>Back home <span>↗</span></button>
+          </nav>
+        </header>
+        <section className="rooms-heading">
+          <span className="eyebrow"><span className="eyebrow-line" /> {isJoin ? "ROOM INVITATION" : "CHALLENGE LOBBY"}</span>
+          <h1>{isJoin ? <>Join the <em>challenge.</em></> : <>Find your <em>opponent.</em></>}</h1>
+          <p>
+            {isJoin
+              ? "Choose a guest name to join this room. Keep it secret, keep it strategic."
+              : "Open a room for anyone to join, create a private invite-only room, or watch a public match."}
+          </p>
+        </section>
+        <section className="room-actions-panel">
+          <label className="guest-name-field">
+            <span>YOUR GUEST NAME</span>
+            <input
+              maxLength={24}
+              value={guestName}
+              onChange={(event) => { setGuestName(event.target.value); setRoomError(""); }}
+              placeholder="Enter your name"
+            />
+          </label>
+          {isJoin ? (
+            <button
+              className="button-primary"
+              type="button"
+              disabled={roomLoading || !guestName.trim()}
+              onClick={() => pendingRoom && void joinRoom(pendingRoom, pendingInvite)}
+            >
+              {roomLoading ? "Joining room..." : "Join this room"} <span aria-hidden="true">↗</span>
+            </button>
+          ) : (
+            <div className="room-create-actions">
+              <button
+                className="button-primary"
+                type="button"
+                disabled={roomLoading || !guestName.trim()}
+                onClick={() => void createOnlineRoom("public")}
+              >
+                Open public room <span aria-hidden="true">↗</span>
+              </button>
+              <button
+                className="button-secondary"
+                type="button"
+                disabled={roomLoading || !guestName.trim()}
+                onClick={() => void createOnlineRoom("private")}
+              >
+                Create private room <span aria-hidden="true">⌑</span>
+              </button>
+            </div>
+          )}
+          {roomError && <p className="room-error" role="alert">{roomError}</p>}
+        </section>
+        {!isJoin && (
+          <section className="room-list-section">
+            <div className="room-list-heading">
+              <div><span className="eyebrow"><span className="eyebrow-line" /> OPEN ROOMS</span><h2>Challenges & matches</h2></div>
+              <span className="room-live-label"><span /> Refreshes every 4 seconds</span>
+            </div>
+            {roomList.length === 0 ? (
+              <div className="empty-room-list">
+                <span className="empty-room-mark">✦</span>
+                <h3>No public rooms yet</h3>
+                <p>Start the first challenge, or check back in a moment.</p>
+              </div>
+            ) : (
+              <div className="room-list">
+                {roomList.map((room) => {
+                  const isWaiting = room.phase === "setup" && !room.opponent;
+                  return (
+                    <article className="room-list-item" key={room.roomId}>
+                      <div className="room-kind-mark">{isWaiting ? "＋" : "✦"}</div>
+                      <div className="room-list-info">
+                        <strong>{room.host}{room.opponent ? ` vs ${room.opponent}` : " · waiting for opponent"}</strong>
+                        <span>{isWaiting ? "Open challenge" : room.phase === "playing" ? `${room.moveCount} moves played` : "Match complete"}</span>
+                      </div>
+                      <span className={`room-phase-tag ${isWaiting ? "waiting" : ""}`}>
+                        {isWaiting ? "OPEN" : room.phase === "playing" ? "LIVE" : "FINISHED"}
+                      </span>
+                      {isWaiting ? (
+                        <button
+                          className="room-entry-button"
+                          type="button"
+                          disabled={roomLoading || !guestName.trim()}
+                          onClick={() => void joinRoom(room.roomId)}
+                        >
+                          Join <span>↗</span>
+                        </button>
+                      ) : (
+                        <button
+                          className="room-entry-button"
+                          type="button"
+                          onClick={() => void openSpectatorRoom(room.roomId)}
+                        >
+                          Watch <span>↗</span>
+                        </button>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+        <footer className="site-footer rooms-footer">
+          <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setScreen("home"); }}>
+            <span className="brand-mark">S</span><span>SLPKN <b>PH</b></span>
+          </a>
+          <span>Public matches are visible to spectators. Private rooms require an invitation.</span>
+        </footer>
+      </main>
+    );
+  }
+
   if (screen === "home") {
     return (
       <main className="site-shell">
@@ -266,7 +843,9 @@ export default function GameClient() {
           </a>
           <nav className="header-nav" aria-label="Main navigation">
             <a href="#how-to-play">How to play</a>
-            <span className="local-badge"><span /> LOCAL 2-PLAYER</span>
+            <button className="local-badge rooms-nav-button" type="button" onClick={() => { setRoomError(""); setScreen("rooms"); }}>
+              <span /> CHALLENGE ROOMS
+            </button>
           </nav>
         </header>
         <section className="hero">
@@ -277,12 +856,15 @@ export default function GameClient() {
               Lead your army in a battle of bluff, memory, and strategy. Hide your ranks, read your rival, and make every move count.
             </p>
             <div className="hero-actions">
+              <button className="button-secondary" type="button" onClick={() => { setRoomError(""); setScreen("rooms"); }}>
+                Play online <span aria-hidden="true">↗</span>
+              </button>
               <button className="button-primary" type="button" onClick={startGame}>
-                Start a game <span aria-hidden="true">↗</span>
+                Play locally <span aria-hidden="true">↗</span>
               </button>
               <a className="text-link" href="#how-to-play">Learn the rules <span>↓</span></a>
             </div>
-            <div className="hero-meta"><span>♙</span> Two players · One screen · No account needed</div>
+            <div className="hero-meta"><span>♙</span> Private invites · Public challenges · Live spectators</div>
           </div>
           <div className="hero-art" aria-label="Illustration of the SLPKN PH game board">
             <div className="art-glow" />
@@ -357,38 +939,71 @@ export default function GameClient() {
   return (
     <main className="play-shell">
       <header className="play-header">
-        <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setScreen("home"); }} aria-label="Return to home">
+        <a className="brand" href="#" onClick={(event) => { event.preventDefault(); if (isOnline) exitOnlineRoom(); else setScreen("home"); }} aria-label="Return to home">
           <span className="brand-mark">S</span><span>SLPKN <b>PH</b></span>
         </a>
-        <div className="match-label"><span className="live-dot" /> {isSetup ? "ARMY SETUP" : screen === "finished" ? "MATCH COMPLETE" : "LOCAL MATCH"}</div>
-        <button className="header-home" type="button" onClick={() => setScreen("home")}>Back to home <span>↗</span></button>
+        <div className="match-label">
+          <span className="live-dot" />
+          {isOnline
+            ? onlineRoom?.visibility === "private" ? "PRIVATE ROOM" : "PUBLIC ROOM"
+            : isSetup ? "ARMY SETUP" : screen === "finished" ? "MATCH COMPLETE" : "LOCAL MATCH"}
+          {screen === "watching" ? " · SPECTATING" : null}
+        </div>
+        <button className="header-home" type="button" onClick={() => { if (isOnline) exitOnlineRoom(); else setScreen("home"); }}>
+          {isOnline ? "Leave room" : "Back to home"} <span>↗</span>
+        </button>
       </header>
       <div className="play-layout">
         <section className="match-main">
           <div className="match-title-row">
             <div>
-              <span className="eyebrow"><span className="eyebrow-line" /> {isSetup ? "PREPARE YOUR FORCES" : "THE BATTLEFIELD"}</span>
-              <h1>{isSetup ? <>Set your <em>formation.</em></> : screen === "finished" ? <>The field is <em>decided.</em></> : <>Make your <em>move.</em></>}</h1>
+              <span className="eyebrow"><span className="eyebrow-line" /> {screen === "watching" ? "SPECTATOR VIEW" : isSetup ? "PREPARE YOUR FORCES" : "THE BATTLEFIELD"}</span>
+              <h1>{screen === "watching" ? <>Watch the <em>battle.</em></> : isSetup ? <>Set your <em>formation.</em></> : screen === "finished" ? <>The field is <em>decided.</em></> : <>Make your <em>move.</em></>}</h1>
             </div>
-            <div className="round-counter"><span>{String(moveCount + 1).padStart(2, "0")}</span><small>{isSetup ? "SETUP" : "TURN"}</small></div>
+            <div className="round-counter"><span>{String(currentMoveCount + 1).padStart(2, "0")}</span><small>{isSetup ? "SETUP" : "TURN"}</small></div>
           </div>
           <div className="turn-banner">
             <span className={`turn-marker player-${activePlayer}`} />
-            <div><strong>{screen === "finished" ? `${playerName(winner ?? activePlayer)} wins` : `${playerName(activePlayer)}${isSetup ? " · arranging army" : " · your turn"}`}</strong><span>{notice}</span></div>
-            {screen === "playing" && <button className="surrender-button" type="button" onClick={surrender}>Surrender</button>}
+            <div>
+              <strong>
+                {screen === "finished"
+                  ? `${onlineRoom?.players[(gameWinner ?? activePlayer) - 1] ?? playerName(gameWinner ?? activePlayer)} wins`
+                  : screen === "watching"
+                            ? onlineRoom?.winner
+                              ? `${onlineRoom.players[onlineRoom.winner - 1] ?? playerName(onlineRoom.winner)} wins`
+                              : `${onlineRoom?.players[(onlineRoom?.turn ?? 1) - 1] ?? playerName(onlineRoom?.turn ?? 1)}'s turn`
+                            : `${activePlayerName}${isSetup ? " · arranging army" : " · your turn"}`}
+              </strong>
+              <span>{roomError || (onlineRoom?.phase === "setup" && !onlineRoom.players[1]
+                ? "Waiting for an opponent to join this room."
+                : screen === "watching"
+                  ? "Pieces are identical to keep both armies' ranks secret."
+                  : notice)}</span>
+            </div>
+            {screen === "playing" && !isOnline && <button className="surrender-button" type="button" onClick={surrender}>Surrender</button>}
+            {screen === "playing" && isOnline && <button className="surrender-button" type="button" onClick={surrender}>Surrender</button>}
           </div>
           {renderBoard()}
           <div className="board-legend">
-            <span><i className="legend-dot light" /> Player 1</span>
-            <span><i className="legend-dot dark" /> Player 2</span>
-            <span className="legend-secret"><i>✦</i> Hidden rank</span>
+            <span><i className="legend-dot light" /> {onlineRoom?.players[0] ?? "Player 1"}</span>
+            <span><i className="legend-dot dark" /> {onlineRoom?.players[1] ?? "Player 2"}</span>
+            <span className="legend-secret"><i>✦</i> {screen === "watching" ? "All ranks hidden" : "Hidden rank"}</span>
           </div>
         </section>
 
         <aside className="game-sidebar">
           {isSetup ? (
             <>
-              <div className="sidebar-heading"><span className="eyebrow">YOUR RESERVE</span><h2>Build your army</h2><p>Choose a piece, then tap a square in your three-row zone. Tap your placed pieces to return them.</p></div>
+              <div className="sidebar-heading"><span className="eyebrow">YOUR RESERVE</span><h2>Build your army</h2><p>{isOnline ? `Set your private army, ${activePlayerName}. Only you can see your piece ranks.` : "Choose a piece, then tap a square in your three-row zone. Tap your placed pieces to return them."}</p></div>
+              {isOnline && onlineRoom?.visibility === "private" && inviteToken && (
+                <div className="invite-share-card">
+                  <strong>Invite your opponent</strong>
+                  <p>This private room is only accessible to someone with your link.</p>
+                  <button className="button-secondary button-full" type="button" onClick={() => void copyInvitation()}>
+                    {copiedInvite ? "Link copied" : "Copy private invite"} <span>↗</span>
+                  </button>
+                </div>
+              )}
               <div className="reserve-progress"><div><span>Pieces to place</span><strong>{playerPiecesRemaining}<small> / 21</small></strong></div><div className="progress-track"><span style={{ width: `${((21 - playerPiecesRemaining) / 21) * 100}%` }} /></div></div>
               <div className="piece-reserve">
                 {PIECES.map((piece) => {
@@ -399,9 +1014,18 @@ export default function GameClient() {
                       className={`reserve-piece ${selectedPiece === piece.kind ? "reserve-selected" : ""}`}
                       key={piece.kind}
                       type="button"
+                      disabled={roomLoading || (isOnline && onlineRoom?.ready[activePlayer - 1])}
+                      title={piece.name}
                       onClick={() => { setSelectedPiece(piece.kind); setNotice(`${piece.name} selected. Tap a square in your setup zone.`); }}
                     >
-                      <span className="reserve-symbol">{piece.symbol}</span>
+                      <Image
+                        className="reserve-piece-image"
+                        src={pieceImagePath(piece.kind, activePlayer)}
+                        alt=""
+                        width={123}
+                        height={74}
+                        draggable={false}
+                      />
                       <span className="reserve-name">{piece.name}</span>
                       <span className="reserve-count">×{available}</span>
                     </button>
@@ -409,38 +1033,66 @@ export default function GameClient() {
                 })}
               </div>
               <div className="setup-actions">
-                <div className="pass-device-note"><span>↻</span><p>{activePlayer === 1 ? "Your formation stays hidden when you pass the device." : "Player 1 is ready. Arrange your pieces, then begin."}</p></div>
-                <button className="button-primary button-full" type="button" onClick={finishSetup} disabled={!poolReady}>
-                  {activePlayer === 1 ? "Player 1 ready" : "Begin the match"} <span aria-hidden="true">↗</span>
+                <div className="pass-device-note"><span>↻</span><p>{isOnline ? "Your army is hidden from your opponent. Confirm when you have placed all 21 pieces." : activePlayer === 1 ? "Your formation stays hidden when you pass the device." : "Player 1 is ready. Arrange your pieces, then begin."}</p></div>
+                <button className="button-primary button-full" type="button" onClick={finishSetup} disabled={!poolReady || roomLoading || Boolean(isOnline && onlineRoom?.ready[activePlayer - 1])}>
+                  {isOnline && onlineRoom?.ready[activePlayer - 1] ? "Waiting for opponent" : isOnline ? "Confirm army" : activePlayer === 1 ? "Player 1 ready" : "Begin the match"} <span aria-hidden="true">↗</span>
                 </button>
                 {!poolReady && <span className="setup-hint">Place all {playerPiecesRemaining} remaining pieces to continue.</span>}
+                {isOnline && onlineRoom?.ready[activePlayer - 1] && <span className="setup-hint">Your army is locked in. Waiting for the other player.</span>}
               </div>
             </>
           ) : (
             <>
-              <div className="sidebar-heading"><span className="eyebrow">FIELD REPORT</span><h2>{screen === "finished" ? "Match results" : "The battle"}</h2><p>{screen === "finished" ? "A well-played game. Ready for another?" : "Ranks stay hidden until a piece enters battle. Think ahead, and remember what you discover."}</p></div>
+              <div className="sidebar-heading"><span className="eyebrow">{screen === "watching" ? "SPECTATOR FIELD REPORT" : "FIELD REPORT"}</span><h2>{screen === "finished" ? "Match results" : screen === "watching" ? "Watching match" : "The battle"}</h2><p>{screen === "watching" ? "Every piece stays identical on the board. Only captured pieces are revealed in each player's captured list." : screen === "finished" ? "A well-played game. Ready for another?" : "Ranks stay hidden until a piece enters battle. Think ahead, and remember what you discover."}</p></div>
               <div className="player-card">
                 <div className={`player-avatar player-${activePlayer}`}>{activePlayer === 1 ? "I" : "II"}</div>
-                <div><strong>{playerName(activePlayer)}</strong><span>{screen === "finished" ? "Finished" : "Active turn"}</span></div>
-                <span className="active-pill">{screen === "finished" ? "DONE" : "ACTIVE"}</span>
+                <div><strong>{activePlayerName}</strong><span>{screen === "finished" ? "Finished" : "Active turn"}</span></div>
+                <span className="active-pill">{screen === "finished" ? "DONE" : screen === "watching" ? "LIVE" : "ACTIVE"}</span>
               </div>
               <div className="player-card player-card-muted">
                 <div className={`player-avatar player-${activePlayer === 1 ? 2 : 1}`}>{activePlayer === 1 ? "II" : "I"}</div>
-                <div><strong>Player {activePlayer === 1 ? 2 : 1}</strong><span>Opponent</span></div>
+                <div><strong>{onlineRoom?.players[activePlayer === 1 ? 1 : 0] ?? `Player ${activePlayer === 1 ? 2 : 1}`}</strong><span>Opponent</span></div>
                 <span className="secret-status">HIDDEN</span>
               </div>
-              <div className="field-note"><span className="note-icon">✦</span><div><strong>Remember what you learn</strong><p>When pieces battle, their ranks are revealed. Keep track—knowledge can turn the tide.</p></div></div>
+              {onlineRoom && (
+                <div className="captured-columns">
+                  {[0, 1].map((playerIndex) => (
+                    <section className="captured-panel" key={playerIndex} aria-label={`Pieces captured by ${onlineRoom.players[playerIndex] ?? `Player ${playerIndex + 1}`}`}>
+                      <strong>{onlineRoom.players[playerIndex] ?? `Player ${playerIndex + 1}`} captured</strong>
+                      <div className="captured-pieces">
+                        {onlineRoom.captured[playerIndex].length === 0
+                          ? <span className="no-captures">No captures yet</span>
+                          : onlineRoom.captured[playerIndex].map((kind, index) => (
+                            <Image
+                              className="captured-piece-image"
+                              key={`${kind}-${index}`}
+                              src={pieceImagePath(kind, playerIndex === 0 ? 2 : 1)}
+                              alt={pieceName(kind)}
+                              title={pieceName(kind)}
+                              width={123}
+                              height={74}
+                            />
+                          ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+              {(!isOnline || screen !== "watching") && <div className="field-note"><span className="note-icon">✦</span><div><strong>Remember what you learn</strong><p>When pieces battle, their ranks are revealed. Keep track—knowledge can turn the tide.</p></div></div>}
+              {isOnline && screen === "playing" && <div className="online-sync-note"><span className="live-dot" /> Moves sync with both players</div>}
               <div className="turn-log">
                 <span className="eyebrow">MATCH INFO</span>
-                <div><span>Moves played</span><strong>{moveCount}</strong></div>
+                <div><span>Moves played</span><strong>{currentMoveCount}</strong></div>
                 <div><span>Win condition</span><strong>Flag capture or advance</strong></div>
+                {isOnline && <div><span>Room ID</span><strong>{onlineRoom?.roomId.slice(0, 10)}</strong></div>}
               </div>
-              {screen === "finished" && <button className="button-primary button-full restart-button" type="button" onClick={startGame}>Play again <span aria-hidden="true">↗</span></button>}
+              {screen === "finished" && !isOnline && <button className="button-primary button-full restart-button" type="button" onClick={startGame}>Play again <span aria-hidden="true">↗</span></button>}
+              {isOnline && <button className="button-secondary button-full restart-button" type="button" onClick={exitOnlineRoom}>Back to challenge rooms <span aria-hidden="true">↗</span></button>}
             </>
           )}
         </aside>
       </div>
-      <footer className="play-footer"><span>SLPKN PH <b>·</b> GAME OF THE GENERALS</span><span>{isSetup ? "PLACE YOUR PIECES IN YOUR THREE HOME ROWS" : "ONE SQUARE · ANY DIRECTION · EVERY MOVE MATTERS"}</span></footer>
+      <footer className="play-footer"><span>SLPKN PH <b>·</b> GAME OF THE GENERALS</span><span>{screen === "watching" ? "SPECTATOR VIEW · BOTH ARMIES' RANKS REMAIN HIDDEN" : isOnline ? `ROOM UPDATES EVERY ${ROOM_POLL_INTERVAL / 1000} SECONDS` : isSetup ? "PLACE YOUR PIECES IN YOUR THREE HOME ROWS" : "ONE SQUARE · ANY DIRECTION · EVERY MOVE MATTERS"}</span></footer>
     </main>
   );
 }
