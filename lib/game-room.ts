@@ -6,6 +6,7 @@ import {
   createBoard,
   createPieceCounts,
   findWinner,
+  getWinReason,
   type Board,
   type PieceCounts,
   type PieceKind,
@@ -31,6 +32,7 @@ export type RoomRow = {
   phase: RoomPhase;
   turn: Player;
   winner: Player | null;
+  win_reason: "flag-captured" | "flagged" | "surrender" | null;
   move_count: number;
   version: number;
   updated_at: string;
@@ -92,6 +94,7 @@ export function getPublicRoom(room: RoomRow, player: Player | "spectator"): Publ
     players: [room.player1_name, room.player2_name],
     turn: room.turn,
     winner: room.winner,
+    winReason: room.win_reason,
     moveCount: room.move_count,
     version: room.version,
     youAre: player,
@@ -141,6 +144,7 @@ export async function updateRoom(room: RoomRow) {
         phase = ${room.phase},
         turn = ${room.turn},
         winner = ${room.winner},
+        win_reason = ${room.win_reason},
         move_count = ${room.move_count},
         version = version + 1,
         updated_at = now()
@@ -175,6 +179,7 @@ export function createInitialRoom(
     phase: "setup" as const,
     turn: 1 as const,
     winner: null,
+    win_reason: null,
     move_count: 0,
     version: 0,
     updated_at: new Date().toISOString(),
@@ -195,6 +200,7 @@ export function applyRoomAction(room: RoomRow, player: Player, input: unknown): 
     if (room.phase !== "playing") return "The match is not in progress.";
     room.phase = "finished";
     room.winner = player === 1 ? 2 : 1;
+    room.win_reason = "surrender";
     return null;
   }
 
@@ -286,6 +292,7 @@ export function applyRoomAction(room: RoomRow, player: Player, input: unknown): 
     if (winner) {
       room.phase = "finished";
       room.winner = winner;
+      room.win_reason = getWinReason(room.board, winner);
     } else {
       room.turn = player === 1 ? 2 : 1;
     }

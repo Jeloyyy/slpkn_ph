@@ -1,4 +1,4 @@
-import type { Piece, PieceCounts, PieceKind, Player } from "./game";
+import type { Piece, PieceCounts, PieceKind, Player, WinReason } from "./game";
 
 export type RoomPhase = "setup" | "playing" | "finished";
 export type PublicPiece = Piece | { owner: Player; hidden: true };
@@ -15,6 +15,7 @@ export type PublicRoom = {
   players: [string, string | null];
   turn: Player;
   winner: Player | null;
+  winReason: WinReason | null;
   moveCount: number;
   version: number;
   youAre: Player | "spectator";

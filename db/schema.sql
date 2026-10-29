@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS game_rooms (
   phase text NOT NULL DEFAULT 'setup' CHECK (phase IN ('setup', 'playing', 'finished')),
   turn smallint NOT NULL DEFAULT 1 CHECK (turn IN (1, 2)),
   winner smallint CHECK (winner IN (1, 2)),
+  win_reason text CHECK (win_reason IN ('flag-captured', 'flagged', 'surrender')),
   move_count integer NOT NULL DEFAULT 0,
   version integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -28,6 +29,8 @@ ALTER TABLE game_rooms
   ADD COLUMN IF NOT EXISTS captured1 jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE game_rooms
   ADD COLUMN IF NOT EXISTS captured2 jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE game_rooms
+  ADD COLUMN IF NOT EXISTS win_reason text;
 
 CREATE INDEX IF NOT EXISTS game_rooms_updated_at_idx ON game_rooms (updated_at);
 CREATE INDEX IF NOT EXISTS game_rooms_lobby_idx ON game_rooms (visibility, phase, updated_at DESC);

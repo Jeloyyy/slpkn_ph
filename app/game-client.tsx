@@ -8,6 +8,7 @@ import {
   createBoard,
   createPieceCounts,
   findWinner,
+  getWinReason,
   PIECES,
   pieceImagePath,
   pieceName,
@@ -15,6 +16,7 @@ import {
   type Piece,
   type PieceKind,
   type Player,
+  type WinReason,
 } from "./game";
 import type { PublicPiece, PublicRoom, RoomSummary } from "./room-types";
 
@@ -51,9 +53,12 @@ export default function GameClient() {
   const [board, setBoard] = useState<Board>(() => createBoard());
   const [pools, setPools] = useState(() => [createPieceCounts(), createPieceCounts()]);
   const [localActivePlayer, setLocalActivePlayer] = useState<Player>(1);
+  const [localCaptured, setLocalCaptured] = useState<[PieceKind[], PieceKind[]]>([[], []]);
   const [selectedPiece, setSelectedPiece] = useState<PieceKind | null>(null);
   const [selectedSquare, setSelectedSquare] = useState<Position | null>(null);
   const [winner, setWinner] = useState<Player | null>(null);
+  const [localWinReason, setLocalWinReason] = useState<WinReason | null>(null);
+  const [celebrationDismissed, setCelebrationDismissed] = useState(false);
   const [moveCount, setMoveCount] = useState(0);
   const [notice, setNotice] = useState("Choose a piece, then place it on your side of the board.");
   const [guestName, setGuestName] = useState("");
@@ -88,6 +93,16 @@ export default function GameClient() {
       : playerName(activePlayer);
   const currentMoveCount = isOnline && onlineRoom ? onlineRoom.moveCount : moveCount;
   const gameWinner = isOnline && onlineRoom ? onlineRoom.winner : winner;
+  const capturedPieces = onlineRoom?.captured ?? localCaptured;
+  const winReason = isOnline && onlineRoom ? onlineRoom.winReason : localWinReason;
+  const showCelebration =
+    gameWinner !== null &&
+    (screen === "finished" || (isOnline && onlineRoom?.phase === "finished")) &&
+    !celebrationDismissed;
+  const winnerName = gameWinner
+    ? onlineRoom?.players[gameWinner - 1] ?? playerName(gameWinner)
+    : "";
+  const winnerColor = gameWinner === 1 ? "White" : "Black";
 
   function applyRoomSnapshot(room: PublicRoom) {
     const current = onlineRoomRef.current;
@@ -404,10 +419,13 @@ export default function GameClient() {
     setPlayerToken(null);
     setBoard(createBoard());
     setPools([createPieceCounts(), createPieceCounts()]);
+    setLocalCaptured([[], []]);
     setLocalActivePlayer(1);
     setSelectedPiece(null);
     setSelectedSquare(null);
     setWinner(null);
+    setLocalWinReason(null);
+    setCelebrationDismissed(false);
     setMoveCount(0);
     setNotice("Choose a piece, then place it on your side of the board.");
     setScreen("setup");
@@ -569,6 +587,10 @@ export default function GameClient() {
     }
 
     const nextBoard = board.map((row) => [...row]);
+    const nextCaptured: [PieceKind[], PieceKind[]] = [
+      [...localCaptured[0]],
+      [...localCaptured[1]],
+    ];
     let battleNotice: string;
     if (!piece) {
       nextBoard[position.row][position.col] = movingPiece;
@@ -577,23 +599,30 @@ export default function GameClient() {
       const victoriousPiece = combatWinner(movingPiece, piece);
       if (victoriousPiece === movingPiece) {
         nextBoard[position.row][position.col] = movingPiece;
+        nextCaptured[activePlayer - 1].push(piece.kind);
         battleNotice = `${pieceName(movingPiece.kind)} defeats ${pieceName(piece.kind)}.`;
       } else if (victoriousPiece === piece) {
+        nextCaptured[piece.owner - 1].push(movingPiece.kind);
         battleNotice = `${pieceName(piece.kind)} defeats ${pieceName(movingPiece.kind)}.`;
       } else {
         nextBoard[position.row][position.col] = null;
+        nextCaptured[activePlayer - 1].push(piece.kind);
+        nextCaptured[piece.owner - 1].push(movingPiece.kind);
         battleNotice = `${pieceName(movingPiece.kind)} and ${pieceName(piece.kind)} have equal rank. Both are removed.`;
       }
     }
     nextBoard[selectedSquare.row][selectedSquare.col] = null;
     setBoard(nextBoard);
+    setLocalCaptured(nextCaptured);
     setSelectedSquare(null);
     setMoveCount((count) => count + 1);
     const gameWinner = findWinner(nextBoard);
     if (gameWinner) {
       setWinner(gameWinner);
+      setLocalWinReason(getWinReason(nextBoard, gameWinner));
+      setCelebrationDismissed(false);
       setScreen("finished");
-      setNotice(`${playerName(gameWinner)} wins!`);
+      setNotice(`${gameWinner === 1 ? "White" : "Black"} wins!`);
       return;
     }
     const nextPlayer: Player = activePlayer === 1 ? 2 : 1;
@@ -608,6 +637,8 @@ export default function GameClient() {
     }
     const winningPlayer: Player = activePlayer === 1 ? 2 : 1;
     setWinner(winningPlayer);
+    setLocalWinReason("surrender");
+    setCelebrationDismissed(false);
     setScreen("finished");
     setNotice(`${playerName(activePlayer)} surrendered. ${playerName(winningPlayer)} wins!`);
   }
@@ -937,6 +968,7 @@ export default function GameClient() {
   const poolReady = allPiecesPlaced(currentPool);
 
   return (
+    <>
     <main className="play-shell">
       <header className="play-header">
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); if (isOnline) exitOnlineRoom(); else setScreen("home"); }} aria-label="Return to home">
@@ -1054,15 +1086,14 @@ export default function GameClient() {
                 <div><strong>{onlineRoom?.players[activePlayer === 1 ? 1 : 0] ?? `Player ${activePlayer === 1 ? 2 : 1}`}</strong><span>Opponent</span></div>
                 <span className="secret-status">HIDDEN</span>
               </div>
-              {onlineRoom && (
-                <div className="captured-columns">
+              <div className="captured-columns">
                   {[0, 1].map((playerIndex) => (
-                    <section className="captured-panel" key={playerIndex} aria-label={`Pieces captured by ${onlineRoom.players[playerIndex] ?? `Player ${playerIndex + 1}`}`}>
-                      <strong>{onlineRoom.players[playerIndex] ?? `Player ${playerIndex + 1}`} captured</strong>
+                    <section className="captured-panel" key={playerIndex} aria-label={`Pieces captured by ${onlineRoom?.players[playerIndex] ?? playerName((playerIndex + 1) as Player)}`}>
+                      <strong>{onlineRoom?.players[playerIndex] ?? playerName((playerIndex + 1) as Player)} captured</strong>
                       <div className="captured-pieces">
-                        {onlineRoom.captured[playerIndex].length === 0
+                        {capturedPieces[playerIndex].length === 0
                           ? <span className="no-captures">No captures yet</span>
-                          : onlineRoom.captured[playerIndex].map((kind, index) => (
+                          : capturedPieces[playerIndex].map((kind, index) => (
                             <Image
                               className="captured-piece-image"
                               key={`${kind}-${index}`}
@@ -1076,8 +1107,7 @@ export default function GameClient() {
                       </div>
                     </section>
                   ))}
-                </div>
-              )}
+              </div>
               {(!isOnline || screen !== "watching") && <div className="field-note"><span className="note-icon">✦</span><div><strong>Remember what you learn</strong><p>When pieces battle, their ranks are revealed. Keep track—knowledge can turn the tide.</p></div></div>}
               {isOnline && screen === "playing" && <div className="online-sync-note"><span className="live-dot" /> Moves sync with both players</div>}
               <div className="turn-log">
@@ -1094,5 +1124,55 @@ export default function GameClient() {
       </div>
       <footer className="play-footer"><span>SLPKN PH <b>·</b> GAME OF THE GENERALS</span><span>{screen === "watching" ? "SPECTATOR VIEW · BOTH ARMIES' RANKS REMAIN HIDDEN" : isOnline ? `ROOM UPDATES EVERY ${ROOM_POLL_INTERVAL / 1000} SECONDS` : isSetup ? "PLACE YOUR PIECES IN YOUR THREE HOME ROWS" : "ONE SQUARE · ANY DIRECTION · EVERY MOVE MATTERS"}</span></footer>
     </main>
+    {showCelebration && gameWinner && (
+      <div className="victory-overlay">
+        <section
+          className={`victory-card victory-${gameWinner === 1 ? "white" : "black"}`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="victory-title"
+        >
+          <div className="victory-rays" aria-hidden="true" />
+          <span className="victory-overline">SALPAKAN · MATCH COMPLETE</span>
+          <div className="victory-flag">
+            <Image
+              src={pieceImagePath("F", gameWinner)}
+              alt=""
+              width={123}
+              height={74}
+            />
+          </div>
+          <span className="victory-color">{winnerColor}</span>
+          <h2 id="victory-title">{winnerName} wins!</h2>
+          <p className="victory-reason">
+            {winReason === "flagged"
+              ? "FLAG ADVANCED TO THE BACK RANK"
+              : winReason === "surrender"
+                ? "THE OPPONENT SURRENDERED"
+                : "OPPONENT'S FLAG CAPTURED"}
+          </p>
+          <div className="victory-divider"><span>✦</span></div>
+          <div className="victory-actions">
+            {isOnline ? (
+              <button className="button-primary" type="button" onClick={exitOnlineRoom}>
+                Back to rooms <span aria-hidden="true">↗</span>
+              </button>
+            ) : (
+              <button className="button-primary" type="button" onClick={startGame}>
+                Play again <span aria-hidden="true">↗</span>
+              </button>
+            )}
+            <button
+              className="victory-dismiss"
+              type="button"
+              onClick={() => setCelebrationDismissed(true)}
+            >
+              View the board
+            </button>
+          </div>
+        </section>
+      </div>
+    )}
+    </>
   );
 }
