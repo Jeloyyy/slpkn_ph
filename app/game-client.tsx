@@ -1047,13 +1047,14 @@ export default function GameClient() {
   function renderHiddenPiece(owner: Player) {
     return (
       <span className={`piece-hidden piece-back-player-${owner}`} aria-hidden="true">
-        <svg viewBox="0 0 64 64" focusable="false">
-          <path d="M32 5c-11 0-19 8-19 21l-5 5 5 4v9c0 7 5 13 12 16v3L14 59v3h36v-3L39 56v-3c7-3 12-9 12-16v-9C51 13 43 5 32 5Z" />
-          <path d="M13 28c8-4 30-4 38 0l-2 5H15Z" className="piece-back-helmet-band" />
-          <path d="M19 33h26v7c0 8-5 13-13 13s-13-5-13-13Z" className="piece-back-face" />
-          <path d="M24 39h4v2h-4zm12 0h4v2h-4z" className="piece-back-face-detail" />
-          <path d="m27 52 5 3 5-3v4l-5 3-5-3Z" className="piece-back-uniform-detail" />
-        </svg>
+        <Image
+          className="piece-hidden-image"
+          src="/pieces/default-hidden-piece-display.jpg"
+          alt=""
+          width={123}
+          height={74}
+          draggable={false}
+        />
       </span>
     );
   }
@@ -1373,21 +1374,31 @@ export default function GameClient() {
             <div className="art-glow" />
             <div className="hero-board">
               {[
-                ["", "✦", "", "◆", "", "✦", "", "", ""],
-                ["●", "", "⬟", "", "◆", "", "●", "", ""],
-                ["", "▲", "", "", "", "⬟", "", "●", ""],
-                ["", "", "✧", "", "✧", "", "", "", ""],
-                ["", "", "", "✧", "", "✧", "", "", ""],
-                ["●", "", "◆", "", "", "⬟", "", "", ""],
-                ["", "●", "", "⬟", "", "●", "", "▲", ""],
-                ["◆", "", "●", "", "⬟", "", "●", "", ""],
+                ["", "piece", "", "piece", "", "piece", "", "", ""],
+                ["piece", "", "piece", "", "piece", "", "piece", "", ""],
+                ["", "piece", "", "", "", "piece", "", "piece", ""],
+                ["", "", "water", "", "water", "", "", "", ""],
+                ["", "", "", "water", "", "water", "", "", ""],
+                ["piece", "", "piece", "", "", "piece", "", "", ""],
+                ["", "piece", "", "piece", "", "piece", "", "piece", ""],
+                ["piece", "", "piece", "", "piece", "", "piece", "", ""],
               ].flatMap((row, rowIndex) =>
-                row.map((symbol, colIndex) => (
+                row.map((cell, colIndex) => (
                   <div
-                    className={`art-cell ${(rowIndex + colIndex) % 2 ? "art-cell-dark" : ""} ${symbol === "✧" ? "art-water" : ""}`}
+                    className={`art-cell ${(rowIndex + colIndex) % 2 ? "art-cell-dark" : ""} ${cell === "water" ? "art-water" : ""}`}
                     key={`${rowIndex}-${colIndex}`}
                   >
-                    {symbol && <span className={`art-piece ${rowIndex < 4 ? "art-enemy" : "art-own"}`}>{symbol}</span>}
+                    {cell === "piece" && (
+                      <span className={`art-piece piece-back-player-${rowIndex < 4 ? 2 : 1}`}>
+                        <Image
+                          className="art-piece-image"
+                          src="/pieces/default-hidden-piece-display.jpg"
+                          alt=""
+                          width={123}
+                          height={74}
+                        />
+                      </span>
+                    )}
                   </div>
                 )),
               )}
@@ -1684,7 +1695,7 @@ export default function GameClient() {
                       ? "Waiting for opponent..."
                       : opponentRematchRequested
                         ? "Accept rematch"
-                        : "Restore armies for setup"}
+                        : "Rematch"}
                   </button>
                 )}
                 <button className="victory-dismiss" type="button" onClick={exitOnlineRoom}>
