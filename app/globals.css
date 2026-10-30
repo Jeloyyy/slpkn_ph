@@ -107,6 +107,26 @@ a:focus-visible {
   color: var(--gold);
 }
 
+.header-nav .history-nav-link {
+  padding: 10px 15px;
+  border: 1px solid rgba(214, 170, 99, 0.3);
+  background: #292f2b;
+  color: var(--paper);
+  font-weight: 600;
+}
+
+.header-nav .history-nav-current {
+  border-color: rgba(214, 170, 99, 0.55);
+  background: #343a35;
+  color: var(--gold);
+}
+
+.header-nav .history-nav-link:hover {
+  border-color: rgba(214, 170, 99, 0.65);
+  background: #343a35;
+  color: var(--gold);
+}
+
 .local-badge,
 .eyebrow {
   display: inline-flex;
@@ -416,20 +436,46 @@ a:focus-visible {
   font-weight: 400;
 }
 
-.room-live-label {
+.room-refresh-button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  color: #888a80;
-  font-size: 9px;
+  justify-content: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(214, 170, 99, 0.35);
+  background: rgba(214, 170, 99, 0.05);
+  color: #d3c7ac;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
-.room-live-label > span {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #b5c276;
-  box-shadow: 0 0 12px rgba(181, 194, 118, 0.5);
+.room-refresh-button:hover:not(:disabled) {
+  border-color: rgba(214, 170, 99, 0.7);
+  background: rgba(214, 170, 99, 0.12);
+  color: var(--paper);
+}
+
+.room-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.room-refresh-button > span {
+  color: var(--gold);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.room-refresh-button:disabled > span {
+  animation: room-refresh-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes room-refresh-pulse {
+  to {
+    opacity: 0.35;
+  }
 }
 
 .room-list {
@@ -1796,6 +1842,12 @@ a:focus-visible {
     display: none;
   }
 
+  .header-nav .history-nav-link {
+    display: inline-flex;
+    padding: 8px 10px;
+    font-size: 8px;
+  }
+
   .header-nav .rooms-nav-button {
     display: inline-flex;
     font-size: 7px;
@@ -2087,6 +2139,28 @@ a:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.history-page .site-header {
+  position: relative;
+  padding: 0 clamp(12px, 2vw, 24px);
+  border-bottom: 0;
+}
+
+.history-page .site-header::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0 auto 0 50%;
+  width: 100vw;
+  transform: translateX(-50%);
+  border-bottom: 1px solid rgba(230, 219, 194, 0.18);
+  background: #292f2b;
+  content: "";
+}
+
+.history-page .site-header > * {
+  position: relative;
+  z-index: 1;
+}
+
 .history-hero h1 {
   margin: 24px 0 19px;
   color: var(--paper);
@@ -2318,6 +2392,10 @@ a:focus-visible {
 
   .history-page .header-nav > a:nth-child(2) {
     display: none;
+  }
+
+  .history-page .header-nav .history-nav-link {
+    display: inline-flex;
   }
 
   .history-page .header-nav .history-play-link {

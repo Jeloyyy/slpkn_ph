@@ -71,6 +71,7 @@ export default function GameClient() {
   const [playerToken, setPlayerToken] = useState<string | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [roomList, setRoomList] = useState<RoomSummary[]>([]);
+  const [roomListRefreshing, setRoomListRefreshing] = useState(false);
   const [roomLoading, setRoomLoading] = useState(false);
   const [roomError, setRoomError] = useState("");
   const [pendingRoom, setPendingRoom] = useState<string | null>(null);
@@ -368,27 +369,26 @@ export default function GameClient() {
     return () => { active = false; };
   }, []);
 
+  const refreshRoomList = useCallback(async () => {
+    setRoomListRefreshing(true);
+    try {
+      const response = await fetch("/api/rooms", { cache: "no-store" });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(getErrorMessage(result, "Could not load rooms."));
+      if (Array.isArray(result)) setRoomList(result as RoomSummary[]);
+      setRoomError("");
+    } catch (error) {
+      setRoomError(error instanceof Error ? error.message : "Could not load rooms.");
+    } finally {
+      setRoomListRefreshing(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (screen !== "rooms") return;
-    let active = true;
-    const loadRooms = async () => {
-      try {
-        const response = await fetch("/api/rooms", { cache: "no-store" });
-        const result: unknown = await response.json();
-        if (!response.ok) throw new Error(getErrorMessage(result, "Could not load rooms."));
-        if (active && Array.isArray(result)) setRoomList(result as RoomSummary[]);
-        if (active) setRoomError("");
-      } catch (error) {
-        if (active) setRoomError(error instanceof Error ? error.message : "Could not load rooms.");
-      }
-    };
-    void loadRooms();
-    const interval = window.setInterval(() => void loadRooms(), 4000);
-    return () => {
-      active = false;
-      window.clearInterval(interval);
-    };
-  }, [screen]);
+    const timeout = window.setTimeout(() => void refreshRoomList(), 0);
+    return () => window.clearTimeout(timeout);
+  }, [refreshRoomList, screen]);
 
   useEffect(() => {
     if (!isOnline || !onlineRoom || screen === "rooms" || screen === "home" || screen === "join") return;
@@ -1147,13 +1147,22 @@ export default function GameClient() {
           <section className="room-list-section">
             <div className="room-list-heading">
               <div><span className="eyebrow"><span className="eyebrow-line" /> OPEN ROOMS</span><h2>Challenges & matches</h2></div>
-              <span className="room-live-label"><span /> Refreshes every 4 seconds</span>
+              <button
+                className="room-refresh-button"
+                type="button"
+                onClick={() => void refreshRoomList()}
+                disabled={roomListRefreshing}
+                aria-label={roomListRefreshing ? "Refreshing public rooms" : "Refresh public rooms"}
+              >
+                <span aria-hidden="true">{roomListRefreshing ? "…" : "↻"}</span>
+                {roomListRefreshing ? "Refreshing..." : "Refresh rooms"}
+              </button>
             </div>
             {roomList.length === 0 ? (
               <div className="empty-room-list">
                 <span className="empty-room-mark">✦</span>
                 <h3>No public rooms yet</h3>
-                <p>Start the first challenge, or check back in a moment.</p>
+                <p>Start the first challenge, or refresh to check for rooms.</p>
               </div>
             ) : (
               <div className="room-list">
@@ -1220,7 +1229,7 @@ export default function GameClient() {
           </a>
           <nav className="header-nav" aria-label="Main navigation">
             <a href="#how-to-play">How to play</a>
-            <a href="/history">Game history</a>
+            <a className="history-nav-link" href="/history">Game history</a>
             <button className="local-badge rooms-nav-button" type="button" onClick={() => { setRoomError(""); setScreen("rooms"); }}>
               <span /> CHALLENGE ROOMS
             </button>

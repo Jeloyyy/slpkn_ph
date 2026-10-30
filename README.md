@@ -13,7 +13,7 @@ Open [http://localhost:3000](http://localhost:3000) to play.
 
 ## Online rooms
 
-Online rooms use Neon Postgres to store the board, clocks, and latest move. Both players' browsers poll for room changes every 0.8 seconds; the public challenge lobby refreshes every 4 seconds. No separate realtime provider is required.
+Online rooms use Neon Postgres to store the board, clocks, and latest move. Both players' browsers poll for room changes every 0.8 seconds; players refresh the public challenge lobby on demand with its refresh button. No separate realtime provider is required.
 
 1. Create a Neon project and copy its pooled connection string.
 2. Set `DATABASE_URL` in `.env.local` for local development and in the Vercel project's environment variables for deployment. `.env.example` shows the expected format.
