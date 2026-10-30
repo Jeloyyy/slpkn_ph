@@ -12,7 +12,13 @@ import {
   type PieceKind,
   type Player,
 } from "@/app/game";
-import type { PublicRoom, RoomPhase, RoomSummary, RoomVisibility } from "@/app/room-types";
+import type {
+  PublicLastMove,
+  PublicRoom,
+  RoomPhase,
+  RoomSummary,
+  RoomVisibility,
+} from "@/app/room-types";
 
 type SetupPiece = { row: number; col: number; kind: PieceKind };
 
@@ -38,8 +44,13 @@ export type RoomRow = {
   phase: RoomPhase;
   turn: Player;
   winner: Player | null;
-  win_reason: "flag-captured" | "flagged" | "surrender" | null;
+  win_reason: "flag-captured" | "flagged" | "surrender" | "timeout" | null;
   move_count: number;
+  last_move: PublicLastMove | null;
+  time_control_seconds: number | null;
+  clock1_ms: number | null;
+  clock2_ms: number | null;
+  clock_started_at: string | null;
   version: number;
   updated_at: string;
 };
@@ -102,6 +113,7 @@ export function getPublicRoom(room: RoomRow, player: Player | "spectator"): Publ
     winner: room.winner,
     winReason: room.win_reason,
     moveCount: room.move_count,
+    lastMove: room.last_move,
     version: room.version,
     rematch: [room.rematch1, room.rematch2],
     rematchSetup:
@@ -109,6 +121,9 @@ export function getPublicRoom(room: RoomRow, player: Player | "spectator"): Publ
       room.move_count === 0 &&
       room.setup1 !== null &&
       room.setup2 !== null,
+    timeControlSeconds: room.time_control_seconds,
+    clocksMs: [room.clock1_ms, room.clock2_ms],
+    clockStartedAt: room.clock_started_at,
     youAre: player,
   };
 }
@@ -123,6 +138,7 @@ export function getRoomSummary(room: RoomRow): RoomSummary {
     turn: room.turn,
     moveCount: room.move_count,
     updatedAt: room.updated_at,
+    timeControlSeconds: room.time_control_seconds,
   };
 }
 
@@ -162,6 +178,11 @@ export async function updateRoom(room: RoomRow) {
         winner = ${room.winner},
         win_reason = ${room.win_reason},
         move_count = ${room.move_count},
+        last_move = ${room.last_move ? JSON.stringify(room.last_move) : null}::jsonb,
+        time_control_seconds = ${room.time_control_seconds},
+        clock1_ms = ${room.clock1_ms},
+        clock2_ms = ${room.clock2_ms},
+        clock_started_at = ${room.clock_started_at},
         version = version + 1,
         updated_at = now()
     WHERE room_id = ${room.room_id} AND version = ${room.version}
@@ -176,6 +197,7 @@ export function createInitialRoom(
   playerHash: string,
   name: string,
   visibility: RoomVisibility,
+  timeControlSeconds: number | null,
 ) {
   return {
     room_id: roomId,
@@ -201,6 +223,11 @@ export function createInitialRoom(
     winner: null,
     win_reason: null,
     move_count: 0,
+    last_move: null,
+    time_control_seconds: timeControlSeconds,
+    clock1_ms: timeControlSeconds === null ? null : timeControlSeconds * 1000,
+    clock2_ms: timeControlSeconds === null ? null : timeControlSeconds * 1000,
+    clock_started_at: null,
     version: 0,
     updated_at: new Date().toISOString(),
   };
@@ -218,9 +245,19 @@ export function applyRoomAction(room: RoomRow, player: Player, input: unknown): 
 
   if (action.type === "surrender") {
     if (room.phase !== "playing") return "The match is not in progress.";
+    if (expireOnTime(room)) return null;
     room.phase = "finished";
     room.winner = player === 1 ? 2 : 1;
     room.win_reason = "surrender";
+    room.clock_started_at = null;
+    return null;
+  }
+
+  if (action.type === "claim-timeout") {
+    if (room.phase !== "playing" || room.time_control_seconds === null) {
+      return "This match does not have an active clock.";
+    }
+    if (!expireOnTime(room)) return "The current player's clock has not expired.";
     return null;
   }
 
@@ -253,6 +290,10 @@ export function applyRoomAction(room: RoomRow, player: Player, input: unknown): 
       room.winner = null;
       room.win_reason = null;
       room.move_count = 0;
+      room.last_move = null;
+      room.clock1_ms = room.time_control_seconds === null ? null : room.time_control_seconds * 1000;
+      room.clock2_ms = room.time_control_seconds === null ? null : room.time_control_seconds * 1000;
+      room.clock_started_at = null;
     }
     return null;
   }
@@ -278,7 +319,10 @@ export function applyRoomAction(room: RoomRow, player: Player, input: unknown): 
         ),
       );
     }
-    if (room.ready1 && room.ready2) room.phase = "playing";
+    if (room.ready1 && room.ready2) {
+      room.phase = "playing";
+      room.clock_started_at = room.time_control_seconds === null ? null : new Date().toISOString();
+    }
     return null;
   }
 
@@ -335,19 +379,46 @@ export function applyRoomAction(room: RoomRow, player: Player, input: unknown): 
     if (!attacker || attacker.owner !== player) return "Select one of your own pieces.";
     if (defender?.owner === player) return "You cannot capture your own piece.";
 
+    if (expireOnTime(room)) return null;
+
+    const attackerKind = attacker.kind;
+    let result: PublicLastMove["result"] = "move";
+    let movedKind: PieceKind | null = null;
+    const capturedKinds: PieceKind[] = [];
     if (!defender) {
       room.board[toRow][toCol] = attacker;
     } else {
       const victor = combatWinner(attacker, defender);
       room.board[toRow][toCol] = victor ? { kind: victor.kind, owner: victor.owner } : null;
+      movedKind = attackerKind;
       if (!victor || victor.owner === player) {
         const capturePool = player === 1 ? room.captured1 : room.captured2;
         capturePool.push(defender.kind);
+        capturedKinds.push(defender.kind);
+        result = "capture";
       }
       if (!victor || victor.owner !== player) {
         const capturePool = player === 1 ? room.captured2 : room.captured1;
         capturePool.push(attacker.kind);
+        capturedKinds.push(attacker.kind);
+        result = victor ? "lost" : "mutual";
       }
+    }
+    room.last_move = {
+      fromRow,
+      fromCol,
+      toRow,
+      toCol,
+      player,
+      result,
+      movedKind,
+      capturedKinds,
+    };
+
+    if (room.time_control_seconds !== null && room.clock_started_at) {
+      const elapsedMs = Math.max(0, Date.now() - Date.parse(room.clock_started_at));
+      if (player === 1 && room.clock1_ms !== null) room.clock1_ms = Math.max(0, room.clock1_ms - elapsedMs);
+      if (player === 2 && room.clock2_ms !== null) room.clock2_ms = Math.max(0, room.clock2_ms - elapsedMs);
     }
     room.board[fromRow][fromCol] = null;
     room.move_count += 1;
@@ -356,11 +427,36 @@ export function applyRoomAction(room: RoomRow, player: Player, input: unknown): 
       room.phase = "finished";
       room.winner = winner;
       room.win_reason = getWinReason(room.board, winner);
+      room.clock_started_at = null;
     } else {
       room.turn = player === 1 ? 2 : 1;
+      room.clock_started_at = room.time_control_seconds === null ? null : new Date().toISOString();
     }
     return null;
   }
 
   return "Unknown action.";
+}
+
+function expireOnTime(room: RoomRow) {
+  if (
+    room.phase !== "playing" ||
+    room.time_control_seconds === null ||
+    !room.clock_started_at
+  ) {
+    return false;
+  }
+
+  const remainingMs = room.turn === 1 ? room.clock1_ms : room.clock2_ms;
+  if (remainingMs === null) return false;
+  const elapsedMs = Math.max(0, Date.now() - Date.parse(room.clock_started_at));
+  if (remainingMs > elapsedMs) return false;
+
+  room.phase = "finished";
+  room.winner = room.turn === 1 ? 2 : 1;
+  room.win_reason = "timeout";
+  room.clock_started_at = null;
+  if (room.turn === 1) room.clock1_ms = 0;
+  else room.clock2_ms = 0;
+  return true;
 }

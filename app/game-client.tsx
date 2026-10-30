@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   allPiecesPlaced,
   combatWinner,
@@ -18,7 +18,7 @@ import {
   type Player,
   type WinReason,
 } from "./game";
-import type { PublicPiece, PublicRoom, RoomSummary } from "./room-types";
+import type { PublicLastMove, PublicPiece, PublicRoom, RoomSummary } from "./room-types";
 
 type Screen = "home" | "rooms" | "join" | "setup" | "playing" | "finished" | "watching";
 type Position = { row: number; col: number };
@@ -48,12 +48,17 @@ function playerName(player: Player) {
   return `Player ${player}`;
 }
 
+function squareNotation(row: number, col: number) {
+  return `${"ABCDEFGHI"[col]}${8 - row}`;
+}
+
 export default function GameClient() {
   const [screen, setScreen] = useState<Screen>("home");
   const [board, setBoard] = useState<Board>(() => createBoard());
   const [pools, setPools] = useState(() => [createPieceCounts(), createPieceCounts()]);
   const [localActivePlayer, setLocalActivePlayer] = useState<Player>(1);
   const [localCaptured, setLocalCaptured] = useState<[PieceKind[], PieceKind[]]>([[], []]);
+  const [localLastMove, setLocalLastMove] = useState<PublicLastMove | null>(null);
   const [selectedPiece, setSelectedPiece] = useState<PieceKind | null>(null);
   const [selectedSquare, setSelectedSquare] = useState<Position | null>(null);
   const [winner, setWinner] = useState<Player | null>(null);
@@ -72,11 +77,15 @@ export default function GameClient() {
   const [pendingInvite, setPendingInvite] = useState("");
   const [isOnline, setIsOnline] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [timeChoice, setTimeChoice] = useState<"untimed" | "5" | "10" | "custom">("untimed");
+  const [customMinutes, setCustomMinutes] = useState("15");
+  const [clockNow, setClockNow] = useState(0);
   const isRefreshing = useRef(false);
   const onlineRoomRef = useRef<PublicRoom | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const timeoutRequestRef = useRef<{ version: number; retryAt: number } | null>(null);
 
-  function playMoveSound() {
+  const playMoveSound = useCallback(() => {
     if (typeof window === "undefined" || !window.AudioContext) return;
 
     try {
@@ -112,7 +121,7 @@ export default function GameClient() {
     } catch (error) {
       console.error("Could not play the move sound.", error);
     }
-  }
+  }, []);
 
   const isSetup = screen === "setup";
   const activePlayer =
@@ -137,6 +146,7 @@ export default function GameClient() {
   const currentMoveCount = isOnline && onlineRoom ? onlineRoom.moveCount : moveCount;
   const gameWinner = isOnline && onlineRoom ? onlineRoom.winner : winner;
   const capturedPieces = onlineRoom?.captured ?? localCaptured;
+  const lastMove = isOnline ? onlineRoom?.lastMove ?? null : localLastMove;
   const winReason = isOnline && onlineRoom ? onlineRoom.winReason : localWinReason;
   const showCelebration =
     gameWinner !== null &&
@@ -153,8 +163,48 @@ export default function GameClient() {
   const opponentRematchRequested = onlineRoom && onlineRoom.youAre !== "spectator"
     ? onlineRoom.rematch[onlineRoom.youAre === 1 ? 1 : 0]
     : false;
+  const clockValue = (player: Player) => {
+    if (!onlineRoom || onlineRoom.clocksMs[player - 1] === null) return null;
+    const stored = onlineRoom.clocksMs[player - 1] ?? 0;
+    const isRunning = onlineRoom.phase === "playing" &&
+      onlineRoom.turn === player &&
+      onlineRoom.clockStartedAt !== null;
+    const elapsed = isRunning
+      ? Math.max(0, clockNow - Date.parse(onlineRoom.clockStartedAt ?? ""))
+      : 0;
+    return Math.max(0, stored - elapsed);
+  };
+  const formatClock = (milliseconds: number | null) => {
+    if (milliseconds === null) return "—";
+    const totalSeconds = Math.ceil(milliseconds / 1000);
+    return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+  };
+  const lastMoveText = lastMove
+    ? (() => {
+        const mover = onlineRoom?.players[lastMove.player - 1] ?? playerName(lastMove.player);
+        const destination = squareNotation(lastMove.toRow, lastMove.toCol);
+        if (lastMove.result === "capture") {
+          return `${mover}'s ${pieceName(lastMove.movedKind ?? "P")} captured ${lastMove.capturedKinds.map(pieceName).join(" and ")} at ${destination}.`;
+        }
+        if (lastMove.result === "lost") {
+          return `${mover}'s ${pieceName(lastMove.movedKind ?? "P")} was captured at ${destination}.`;
+        }
+        if (lastMove.result === "mutual") {
+          const opposingKind = lastMove.capturedKinds[0];
+          return `${mover}'s ${pieceName(lastMove.movedKind ?? "P")} clashed with ${opposingKind ? pieceName(opposingKind) : "an opposing piece"}; both were removed at ${destination}.`;
+        }
+        return `${mover} moved a hidden piece from ${squareNotation(lastMove.fromRow, lastMove.fromCol)} to ${destination}.`;
+      })()
+    : "No moves have been made yet.";
 
-  function applyRoomSnapshot(room: PublicRoom) {
+  function getRoomTimeControlSeconds() {
+    if (timeChoice === "untimed") return null;
+    const minutes = timeChoice === "custom" ? Number(customMinutes) : Number(timeChoice);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 60) return null;
+    return minutes * 60;
+  }
+
+  const applyRoomSnapshot = useCallback((room: PublicRoom) => {
     const current = onlineRoomRef.current;
     if (current?.roomId === room.roomId && current.version > room.version) return false;
     if (current?.roomId === room.roomId && room.moveCount > current.moveCount) {
@@ -165,7 +215,97 @@ export default function GameClient() {
     setScreen(screenForRoom(room));
     setSelectedSquare(null);
     return true;
+  }, [playMoveSound]);
+
+  function isLatestMoveSquare(row: number, col: number) {
+    return Boolean(
+      lastMove &&
+      ((lastMove.fromRow === row && lastMove.fromCol === col) ||
+        (lastMove.toRow === row && lastMove.toCol === col)),
+    );
   }
+
+  useEffect(() => {
+    const defaultTitle = document.title.startsWith("Your turn · ")
+      ? "SLPKN PH | Salpakan"
+      : document.title;
+    const updateTitle = () => {
+      const isYourTurn =
+        isOnline &&
+        onlineRoom?.phase === "playing" &&
+        onlineRoom.youAre !== "spectator" &&
+        onlineRoom.turn === onlineRoom.youAre;
+      document.title = isYourTurn ? "Your turn · SLPKN PH" : defaultTitle;
+    };
+
+    updateTitle();
+    document.addEventListener("visibilitychange", updateTitle);
+    return () => {
+      document.removeEventListener("visibilitychange", updateTitle);
+      document.title = defaultTitle;
+    };
+  }, [isOnline, onlineRoom?.phase, onlineRoom?.turn, onlineRoom?.youAre]);
+
+  useEffect(() => {
+    if (
+      !isOnline ||
+      onlineRoom?.phase !== "playing" ||
+      onlineRoom.timeControlSeconds === null
+    ) return;
+    const interval = window.setInterval(() => setClockNow(Date.now()), 250);
+    return () => window.clearInterval(interval);
+  }, [isOnline, onlineRoom?.phase, onlineRoom?.timeControlSeconds]);
+
+  useEffect(() => {
+    if (
+      !isOnline ||
+      !onlineRoom ||
+      onlineRoom.phase !== "playing" ||
+      onlineRoom.timeControlSeconds === null ||
+      onlineRoom.youAre === "spectator" ||
+      !playerToken ||
+      !onlineRoom.clockStartedAt
+    ) return;
+
+    const remaining = onlineRoom.clocksMs[onlineRoom.turn - 1];
+    if (remaining === null) return;
+    const elapsed = Math.max(0, clockNow - Date.parse(onlineRoom.clockStartedAt));
+    if (remaining > elapsed) return;
+
+    const previousAttempt = timeoutRequestRef.current;
+    if (
+      previousAttempt?.version === onlineRoom.version &&
+      previousAttempt.retryAt > clockNow
+    ) return;
+    timeoutRequestRef.current = { version: onlineRoom.version, retryAt: clockNow + 5000 };
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/rooms/${onlineRoom.roomId}/action`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${playerToken}`,
+          },
+          body: JSON.stringify({ type: "claim-timeout" }),
+        });
+        const result: unknown = await response.json();
+        if (response.ok && onlineRoomRef.current?.roomId === onlineRoom.roomId) {
+          const room = result as PublicRoom;
+          onlineRoomRef.current = room;
+          setOnlineRoom(room);
+          setScreen(screenForRoom(room));
+          setRoomError("");
+        } else if (response.status !== 400 && response.status !== 409) {
+          setRoomError(getErrorMessage(result, "Could not check the expired game clock."));
+        }
+      } catch (error) {
+        if (onlineRoomRef.current?.roomId === onlineRoom.roomId) {
+          setRoomError(error instanceof Error ? error.message : "Could not check the expired game clock.");
+        }
+      }
+    })();
+  }, [clockNow, isOnline, onlineRoom, playerToken]);
 
   useEffect(() => {
     let active = true;
@@ -285,7 +425,7 @@ export default function GameClient() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [isOnline, onlineRoom, playerToken, screen]);
+  }, [applyRoomSnapshot, isOnline, onlineRoom, playerToken, screen]);
 
   async function openPlayerRoom(roomId: string, token: string) {
     try {
@@ -346,12 +486,16 @@ export default function GameClient() {
   async function createOnlineRoom(visibility: "public" | "private") {
     const name = rememberGuest(guestName);
     if (!name) return;
+    if (timeChoice === "custom" && (!Number.isInteger(Number(customMinutes)) || Number(customMinutes) < 1 || Number(customMinutes) > 60)) {
+      setRoomError("Enter a custom clock between 1 and 60 minutes.");
+      return;
+    }
     setRoomLoading(true);
     try {
       const response = await fetch("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, visibility }),
+        body: JSON.stringify({ name, visibility, timeControlSeconds: getRoomTimeControlSeconds() }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(getErrorMessage(result, "Could not create a room."));
@@ -550,6 +694,7 @@ export default function GameClient() {
     setBoard(createBoard());
     setPools([createPieceCounts(), createPieceCounts()]);
     setLocalCaptured([[], []]);
+    setLocalLastMove(null);
     setLocalActivePlayer(1);
     setSelectedPiece(null);
     setSelectedSquare(null);
@@ -719,6 +864,9 @@ export default function GameClient() {
       [...localCaptured[1]],
     ];
     let battleNotice: string;
+    let result: PublicLastMove["result"] = "move";
+    let movedKind: PieceKind | null = null;
+    const capturedKinds: PieceKind[] = [];
     if (!piece) {
       nextBoard[position.row][position.col] = movingPiece;
       battleNotice = `${pieceName(movingPiece.kind)} moved.`;
@@ -727,17 +875,36 @@ export default function GameClient() {
       if (victoriousPiece === movingPiece) {
         nextBoard[position.row][position.col] = movingPiece;
         nextCaptured[activePlayer - 1].push(piece.kind);
+        result = "capture";
+        movedKind = movingPiece.kind;
+        capturedKinds.push(piece.kind);
         battleNotice = `${pieceName(movingPiece.kind)} defeats ${pieceName(piece.kind)}.`;
       } else if (victoriousPiece === piece) {
         nextCaptured[piece.owner - 1].push(movingPiece.kind);
+        result = "lost";
+        movedKind = movingPiece.kind;
+        capturedKinds.push(movingPiece.kind);
         battleNotice = `${pieceName(piece.kind)} defeats ${pieceName(movingPiece.kind)}.`;
       } else {
         nextBoard[position.row][position.col] = null;
         nextCaptured[activePlayer - 1].push(piece.kind);
         nextCaptured[piece.owner - 1].push(movingPiece.kind);
+        result = "mutual";
+        movedKind = movingPiece.kind;
+        capturedKinds.push(movingPiece.kind, piece.kind);
         battleNotice = `${pieceName(movingPiece.kind)} and ${pieceName(piece.kind)} have equal rank. Both are removed.`;
       }
     }
+    setLocalLastMove({
+      fromRow: selectedSquare.row,
+      fromCol: selectedSquare.col,
+      toRow: position.row,
+      toCol: position.col,
+      player: activePlayer,
+      result,
+      movedKind,
+      capturedKinds,
+    });
     nextBoard[selectedSquare.row][selectedSquare.col] = null;
     setBoard(nextBoard);
     setLocalCaptured(nextCaptured);
@@ -819,6 +986,10 @@ export default function GameClient() {
                 );
                 const isSelected =
                   selectedSquare?.row === position.row && selectedSquare.col === position.col;
+                const isLastMoveFrom =
+                  lastMove?.fromRow === position.row && lastMove.fromCol === position.col;
+                const isLastMoveTo =
+                  lastMove?.toRow === position.row && lastMove.toCol === position.col;
                 const isSetupZone = isSetup && (activePlayer === 1 ? position.row >= 5 : position.row <= 2);
                 const squareLabel = piece
                   ? isSpectator
@@ -836,6 +1007,9 @@ export default function GameClient() {
                       (displayRow + displayCol) % 2 === 0 ? "square-light" : "square-dark",
                       isSetupZone ? "setup-zone" : "",
                       isSelected ? "square-selected" : "",
+                      isLatestMoveSquare(position.row, position.col) ? "square-last-move" : "",
+                      isLastMoveFrom ? "square-last-move-from" : "",
+                      isLastMoveTo ? "square-last-move-to" : "",
                     ].filter(Boolean).join(" ")}
                     key={`${displayRow}-${displayCol}`}
                     type="button"
@@ -915,24 +1089,57 @@ export default function GameClient() {
               {roomLoading ? "Joining room..." : "Join this room"} <span aria-hidden="true">↗</span>
             </button>
           ) : (
-            <div className="room-create-actions">
-              <button
-                className="button-primary"
-                type="button"
-                disabled={roomLoading || !guestName.trim()}
-                onClick={() => void createOnlineRoom("public")}
-              >
-                Open public room <span aria-hidden="true">↗</span>
-              </button>
-              <button
-                className="button-secondary"
-                type="button"
-                disabled={roomLoading || !guestName.trim()}
-                onClick={() => void createOnlineRoom("private")}
-              >
-                Create private room <span aria-hidden="true">⌑</span>
-              </button>
-            </div>
+            <>
+              <label className="time-control-field">
+                <span>TIME CONTROL</span>
+                <select
+                  value={timeChoice}
+                  onChange={(event) => {
+                    setTimeChoice(event.target.value as typeof timeChoice);
+                    setRoomError("");
+                  }}
+                >
+                  <option value="untimed">Untimed</option>
+                  <option value="5">5 minutes per player</option>
+                  <option value="10">10 minutes per player</option>
+                  <option value="custom">Custom (1–60 minutes)</option>
+                </select>
+                {timeChoice === "custom" && (
+                  <input
+                    aria-label="Custom time in minutes per player"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={60}
+                    step={1}
+                    value={customMinutes}
+                    onChange={(event) => {
+                      setCustomMinutes(event.target.value);
+                      setRoomError("");
+                    }}
+                  />
+                )}
+                <small>Each clock runs only on its player’s turn. Reaching zero loses.</small>
+              </label>
+              <div className="room-create-actions">
+                <button
+                  className="button-primary"
+                  type="button"
+                  disabled={roomLoading || !guestName.trim()}
+                  onClick={() => void createOnlineRoom("public")}
+                >
+                  Open public room <span aria-hidden="true">↗</span>
+                </button>
+                <button
+                  className="button-secondary"
+                  type="button"
+                  disabled={roomLoading || !guestName.trim()}
+                  onClick={() => void createOnlineRoom("private")}
+                >
+                  Create private room <span aria-hidden="true">⌑</span>
+                </button>
+              </div>
+            </>
           )}
           {roomError && <p className="room-error" role="alert">{roomError}</p>}
         </section>
@@ -957,7 +1164,13 @@ export default function GameClient() {
                       <div className="room-kind-mark">{isWaiting ? "＋" : "✦"}</div>
                       <div className="room-list-info">
                         <strong>{room.host}{room.opponent ? ` vs ${room.opponent}` : " · waiting for opponent"}</strong>
-                        <span>{isWaiting ? "Open challenge" : room.phase === "playing" ? `${room.moveCount} moves played` : "Match complete"}</span>
+                        <span>
+                          {isWaiting ? "Open challenge" : room.phase === "playing" ? `${room.moveCount} moves played` : "Match complete"}
+                          {" · "}
+                          {room.timeControlSeconds === null
+                            ? "Untimed"
+                            : `${Math.floor(room.timeControlSeconds / 60)} min`}
+                        </span>
                       </div>
                       <span className={`room-phase-tag ${isWaiting ? "waiting" : ""}`}>
                         {isWaiting ? "OPEN" : room.phase === "playing" ? "LIVE" : "FINISHED"}
@@ -1007,6 +1220,7 @@ export default function GameClient() {
           </a>
           <nav className="header-nav" aria-label="Main navigation">
             <a href="#how-to-play">How to play</a>
+            <a href="/history">Game history</a>
             <button className="local-badge rooms-nav-button" type="button" onClick={() => { setRoomError(""); setScreen("rooms"); }}>
               <span /> CHALLENGE ROOMS
             </button>
@@ -1148,6 +1362,21 @@ export default function GameClient() {
             {screen === "playing" && !isOnline && <button className="surrender-button" type="button" onClick={surrender}>Surrender</button>}
             {screen === "playing" && isOnline && <button className="surrender-button" type="button" onClick={surrender}>Surrender</button>}
           </div>
+          {isOnline && onlineRoom?.timeControlSeconds !== null && onlineRoom?.timeControlSeconds !== undefined && (
+            <div className="clock-strip" aria-label="Player clocks">
+              {[1, 2].map((playerIndex) => {
+                const player = playerIndex as Player;
+                const remaining = clockValue(player);
+                const activeClock = onlineRoom.turn === player && onlineRoom.phase === "playing";
+                return (
+                  <div className={`clock-card ${activeClock ? "clock-active" : ""} ${activeClock && remaining !== null && remaining <= 10000 ? "clock-low" : ""}`} key={player}>
+                    <span>{onlineRoom.players[player - 1] ?? playerName(player)}</span>
+                    <strong>{formatClock(remaining)}</strong>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {renderBoard()}
           <div className="board-legend">
             <span><i className="legend-dot light" /> {onlineRoom?.players[0] ?? "Player 1"}</span>
@@ -1218,6 +1447,18 @@ export default function GameClient() {
                 <div className={`player-avatar player-${activePlayer === 1 ? 2 : 1}`}>{activePlayer === 1 ? "II" : "I"}</div>
                 <div><strong>{onlineRoom?.players[activePlayer === 1 ? 1 : 0] ?? `Player ${activePlayer === 1 ? 2 : 1}`}</strong><span>Opponent</span></div>
                 <span className="secret-status">HIDDEN</span>
+              </div>
+              <div className="last-move-card" aria-live="polite">
+                <span className="eyebrow">LATEST MOVE</span>
+                <p>{lastMoveText}</p>
+                {lastMove && (
+                  <small>
+                    {squareNotation(lastMove.fromRow, lastMove.fromCol)}
+                    {" → "}
+                    {squareNotation(lastMove.toRow, lastMove.toCol)}
+                    {lastMove.result !== "move" ? " · BATTLE" : ""}
+                  </small>
+                )}
               </div>
               <div className="captured-columns">
                   {[0, 1].map((playerIndex) => (
@@ -1297,7 +1538,9 @@ export default function GameClient() {
               ? "FLAG ADVANCED TO THE BACK RANK"
               : winReason === "surrender"
                 ? "THE OPPONENT SURRENDERED"
-                : "OPPONENT'S FLAG CAPTURED"}
+                : winReason === "timeout"
+                  ? "TIME EXPIRED"
+                  : "OPPONENT'S FLAG CAPTURED"}
           </p>
           <div className="victory-divider"><span>✦</span></div>
           <div className="victory-actions">

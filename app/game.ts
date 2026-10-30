@@ -19,7 +19,7 @@ export type PieceKind =
 export type Piece = { kind: PieceKind; owner: Player };
 export type Board = (Piece | null)[][];
 export type PieceCounts = Record<PieceKind, number>;
-export type WinReason = "flag-captured" | "flagged" | "surrender";
+export type WinReason = "flag-captured" | "flagged" | "surrender" | "timeout";
 
 export const PIECES: {
   kind: PieceKind;
@@ -90,7 +90,7 @@ export function findWinner(board: Board): Player | null {
   return null;
 }
 
-export function getWinReason(board: Board, winner: Player): Exclude<WinReason, "surrender"> {
+export function getWinReason(board: Board, winner: Player): Exclude<WinReason, "surrender" | "timeout"> {
   const winningFlagRow = winner === 1 ? 0 : 7;
   const flagAdvanced = board[winningFlagRow].some(
     (piece) => piece?.kind === "F" && piece.owner === winner,

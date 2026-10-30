@@ -3,6 +3,17 @@ import type { Piece, PieceCounts, PieceKind, Player, WinReason } from "./game";
 export type RoomPhase = "setup" | "playing" | "finished";
 export type PublicPiece = Piece | { owner: Player; hidden: true };
 export type RoomVisibility = "public" | "private";
+export type LastMoveResult = "move" | "capture" | "lost" | "mutual";
+export type PublicLastMove = {
+  fromRow: number;
+  fromCol: number;
+  toRow: number;
+  toCol: number;
+  player: Player;
+  result: LastMoveResult;
+  movedKind: PieceKind | null;
+  capturedKinds: PieceKind[];
+};
 
 export type PublicRoom = {
   roomId: string;
@@ -17,9 +28,13 @@ export type PublicRoom = {
   winner: Player | null;
   winReason: WinReason | null;
   moveCount: number;
+  lastMove: PublicLastMove | null;
   version: number;
   rematch: [boolean, boolean];
   rematchSetup: boolean;
+  timeControlSeconds: number | null;
+  clocksMs: [number | null, number | null];
+  clockStartedAt: string | null;
   youAre: Player | "spectator";
 };
 
@@ -32,4 +47,5 @@ export type RoomSummary = {
   turn: Player;
   moveCount: number;
   updatedAt: string;
+  timeControlSeconds: number | null;
 };
