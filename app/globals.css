@@ -1722,23 +1722,6 @@ a:focus-visible {
   margin-top: auto;
 }
 
-.play-footer {
-  min-height: 53px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-  border-top: 1px solid var(--line);
-  color: #7e8178;
-  font-size: 8px;
-  letter-spacing: 0.12em;
-}
-
-.play-footer b {
-  padding: 0 4px;
-  color: var(--gold);
-}
-
 @media (min-width: 1500px) {
   .play-layout {
     grid-template-columns: minmax(0, 1fr) 350px;
@@ -2088,14 +2071,6 @@ a:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .play-footer {
-    align-items: flex-start;
-    flex-direction: column;
-    justify-content: center;
-    gap: 6px;
-    padding: 12px 0;
-    font-size: 7px;
-  }
 }
 
 .history-hero {
@@ -2108,6 +2083,28 @@ a:focus-visible {
   position: relative;
   padding: 0 clamp(12px, 2vw, 24px);
   border-bottom: 0;
+}
+
+.landing-page .site-header {
+  position: relative;
+  padding: 0 clamp(12px, 2vw, 24px);
+  border-bottom: 0;
+}
+
+.landing-page .site-header::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0 auto 0 50%;
+  width: 100vw;
+  transform: translateX(-50%);
+  border-bottom: 1px solid rgba(230, 219, 194, 0.18);
+  background: #292f2b;
+  content: "";
+}
+
+.landing-page .site-header > * {
+  position: relative;
+  z-index: 1;
 }
 
 .history-page .site-header::before {
@@ -2279,18 +2276,12 @@ a:focus-visible {
   font-size: 11px;
 }
 
-.history-sources li a:hover,
-.history-footer > a:last-child:hover {
+.history-sources li a:hover {
   color: var(--paper);
 }
 
 .history-sources li p {
   margin-top: 5px;
-}
-
-.history-footer > a:last-child {
-  color: #c1bdb1;
-  font-size: 10px;
 }
 
 .time-control-field > small {
@@ -2364,6 +2355,29 @@ a:focus-visible {
   }
 
   .history-page .header-nav .history-play-link {
+    min-height: 34px;
+    gap: 5px;
+    padding: 0 8px;
+  }
+
+  .landing-page .header-nav {
+    gap: 10px;
+  }
+
+  .landing-page .header-nav > a {
+    display: inline-flex;
+    font-size: 8px;
+  }
+
+  .landing-page .header-nav > a:first-child {
+    display: none;
+  }
+
+  .landing-page .header-nav .history-nav-link {
+    display: inline-flex;
+  }
+
+  .landing-page .header-nav .history-play-link {
     min-height: 34px;
     gap: 5px;
     padding: 0 8px;

@@ -1,6 +1,8 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
+import SiteFooter from "./site-footer";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   allPiecesPlaced,
@@ -1331,20 +1333,14 @@ export default function GameClient() {
             )}
           </section>
         )}
-        <footer className="site-footer rooms-footer">
-          <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setScreen("home"); }}>
-            <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
-            <span>SLPKN <b>PH</b></span>
-          </a>
-          <span>Public matches are visible to spectators. Private rooms require an invitation.</span>
-        </footer>
+        <SiteFooter className="rooms-footer" />
       </main>
     );
   }
 
   if (screen === "home") {
     return (
-      <main className="site-shell">
+      <main className="site-shell landing-page">
         <header className="site-header">
           <a className="brand" href="#" aria-label="SLPKN PH home">
             <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
@@ -1353,9 +1349,9 @@ export default function GameClient() {
           <nav className="header-nav" aria-label="Main navigation">
             <a href="#how-to-play">How to play</a>
             <a className="history-nav-link" href="/history">Game history</a>
-            <button className="local-badge rooms-nav-button" type="button" onClick={() => { setRoomError(""); setScreen("rooms"); }}>
-              <span /> CHALLENGE ROOMS
-            </button>
+            <Link className="button-primary history-play-link" href="/?rooms=1">
+              Challenge rooms <span aria-hidden="true">↗</span>
+            </Link>
           </nav>
         </header>
         <section className="hero">
@@ -1446,7 +1442,7 @@ export default function GameClient() {
           <div><span className="eyebrow"><span className="eyebrow-line" /> THE FIELD IS YOURS</span><h2>Ready to make<br /><em>your move?</em></h2></div>
           <button className="button-primary" type="button" onClick={startGame}>Set up your army <span aria-hidden="true">↗</span></button>
         </section>
-        <footer className="site-footer"><a className="brand" href="#"><Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} /><span>SLPKN <b>PH</b></span></a><span>An educational project inspired by the game named Game of the Generals, created by Sofronio “Ronnie” Pasola.<br /><strong>- JNK777</strong></span><span>Made for the love of the game.</span></footer>
+        <SiteFooter />
       </main>
     );
   }
@@ -1654,7 +1650,7 @@ export default function GameClient() {
           )}
         </aside>
       </div>
-      <footer className="play-footer"><span>SLPKN PH <b>·</b> GAME OF THE GENERALS</span><span>{screen === "watching" ? "SPECTATOR VIEW · BOTH ARMIES' RANKS REMAIN HIDDEN" : isOnline ? `ROOM UPDATES EVERY ${ROOM_POLL_INTERVAL / 1000} SECONDS` : isSetup ? "PLACE YOUR PIECES IN YOUR THREE HOME ROWS" : "ONE SQUARE · ANY DIRECTION · EVERY MOVE MATTERS"}</span></footer>
+      <SiteFooter />
     </main>
     {showCelebration && gameWinner && (
       <div className="victory-overlay">

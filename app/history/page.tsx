@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
+import SiteFooter from "../site-footer";
 
 export const metadata: Metadata = {
   title: "History of Game of the Generals | SLPKN PH",
@@ -137,14 +138,7 @@ export default function HistoryPage() {
         </ol>
       </section>
 
-      <footer className="site-footer history-footer">
-        <Link className="brand" href="/">
-          <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
-          <span>SLPKN <b>PH</b></span>
-        </Link>
-        <span>Game of the Generals was created in the Philippines by Sofronio “Ronnie” Pasola.</span>
-        <Link href="/">Return to the game <span aria-hidden="true">↗</span></Link>
-      </footer>
+      <SiteFooter className="history-footer" />
     </main>
   );
 }
