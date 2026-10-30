@@ -1349,7 +1349,16 @@ export default function GameClient() {
           <nav className="header-nav" aria-label="Main navigation">
             <a href="#how-to-play">How to play</a>
             <a className="history-nav-link" href="/history">Game history</a>
-            <Link className="button-primary history-play-link" href="/?rooms=1">
+            <Link
+              className="button-primary history-play-link"
+              href="/?rooms=1"
+              onClick={(event) => {
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                setRoomError("");
+                setScreen("rooms");
+              }}
+            >
               Challenge rooms <span aria-hidden="true">↗</span>
             </Link>
           </nav>
