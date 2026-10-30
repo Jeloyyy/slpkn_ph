@@ -1,6 +1,6 @@
 # SLPKN PH
 
-A browser-based version of SLPKN PH (Salpakan), inspired by the Filipino game Game of the Generals, created by Sofronio “Ronnie” Pasola. It is built with Next.js, React, and TypeScript and can be deployed to Vercel.
+SLPKN PH is an independent, non-profit educational and informational web project inspired by the Filipino game Game of the Generals, created by Sofronio H. Pasola Jr. It is built with Next.js, React, and TypeScript and can be deployed to Vercel.
 
 ## Run locally
 
@@ -27,7 +27,7 @@ Rooms can be untimed or use a 5-minute, 10-minute, or custom 1–60-minute clock
 
 While an online room remains open in a browser tab, the tab title changes to “Your turn” when it becomes your turn and the game plays its move sound. This does not request notification permission or use push notifications; browsers may suspend background tabs, so it is not a guaranteed alert if the browser/device is paused or closed.
 
-The [game history page](./app/history/page.tsx) introduces the Filipino origins of Game of the Generals and credits Sofronio “Ronnie” Pasola, with links to its historical sources.
+The [game history page](./app/history/page.tsx) introduces the Filipino origins of Game of the Generals, credits its creator Sofronio H. Pasola Jr., and includes an independent-project disclaimer. SLPKN PH is an educational and informational project and does not claim affiliation or ownership of the original game. A disclaimer is not a substitute for permission or legal advice.
 
 The daily Vercel Cron job removes up to 500 stale rooms per run: rooms whose disconnected-player grace has expired, waiting/setup/finished rooms after 24 hours without activity, and games still marked as playing after 7 days without activity. Vercel Hobby cron schedules run daily, so an abandoned room with no subsequent requests may remain in the database until the next scheduled cleanup; rooms are reconciled on room polling and removed immediately when the last player explicitly leaves.
 

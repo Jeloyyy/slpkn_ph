@@ -1411,7 +1411,7 @@ export default function GameClient() {
           <div><span className="stat-number">01</span><span className="stat-label">Set your<br />formation</span></div>
           <div><span className="stat-number">02</span><span className="stat-label">Conceal your<br />rank</span></div>
           <div><span className="stat-number">03</span><span className="stat-label">Capture the<br />flag</span></div>
-          <div className="stat-note">Inspired by the classic game of<br /><strong>Game of the Generals</strong><br />by <strong>Sofronio “Ronnie” Pasola</strong></div>
+          <div className="stat-note">Inspired by the classic game of<br /><strong>Game of the Generals</strong><br />created by <strong>Sofronio H. Pasola Jr.</strong></div>
         </section>
         <section className="rules-section" id="how-to-play">
           <div className="rules-heading">

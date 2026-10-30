@@ -824,6 +824,15 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.site-footer > span:nth-child(2) {
+  max-width: 760px;
+  line-height: 1.65;
+}
+
+.site-footer > span:nth-child(2) em {
+  color: #c9c4b8;
+}
+
 .play-shell {
   width: min(100% - 80px, 1450px);
   min-height: 100vh;
@@ -2282,6 +2291,27 @@ a:focus-visible {
 
 .history-sources li p {
   margin-top: 5px;
+}
+
+.history-disclaimer {
+  max-width: 780px;
+  padding: 58px 0 70px;
+  border-top: 1px solid var(--line);
+}
+
+.history-disclaimer h2 {
+  margin: 20px 0 12px;
+  color: var(--paper);
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3.2vw, 38px);
+  font-weight: 400;
+}
+
+.history-disclaimer p {
+  margin: 0;
+  color: #aaa99f;
+  font-size: 12px;
+  line-height: 1.9;
 }
 
 .time-control-field > small {

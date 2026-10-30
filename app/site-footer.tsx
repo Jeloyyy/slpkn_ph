@@ -19,8 +19,10 @@ export default function SiteFooter({ className = "" }: SiteFooterProps) {
         <span>SLPKN <b>PH</b></span>
       </Link>
       <span>
-        An educational project inspired by the game named Game of the Generals,
-        created by Sofronio “Ronnie” Pasola.
+        SLPKN PH is an independent, non-profit educational project inspired by
+        <em> Game of the Generals</em>, created by Sofronio H. Pasola Jr. It is
+        not affiliated with or endorsed by the creator or rights holders, and
+        does not claim ownership of the original game.
         <strong>- JNK777</strong>
       </span>
       <span>Made for the love of the game.</span>

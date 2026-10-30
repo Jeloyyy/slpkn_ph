@@ -54,7 +54,7 @@ export default function HistoryPage() {
           <span className="history-credit-mark" aria-hidden="true">✦</span>
           <div>
             <span>CREATED BY</span>
-            <strong>Sofronio “Ronnie” Pasola</strong>
+            <strong>Sofronio H. Pasola Jr. (“Ronnie” Pasola)</strong>
             <small>Filipino inventor and entrepreneur</small>
           </div>
         </div>
@@ -136,6 +136,21 @@ export default function HistoryPage() {
             </li>
           ))}
         </ol>
+      </section>
+
+      <section className="history-disclaimer" aria-labelledby="disclaimer-title">
+        <span className="eyebrow"><span className="eyebrow-line" /> DISCLAIMER & ATTRIBUTION</span>
+        <h2 id="disclaimer-title">An independent educational project.</h2>
+        <p>
+          SLPKN PH is a non-profit educational and informational web project
+          inspired by <em>Game of the Generals</em>. It is not an official
+          version of the game and is not affiliated with, sponsored by, or
+          endorsed by Sofronio H. Pasola Jr. or any rights holder. SLPKN PH does
+          not claim ownership of <em>Game of the Generals</em> or its original
+          name, branding, artwork, or other protected materials. The game is
+          credited to its creator, Sofronio H. Pasola Jr. References to the game
+          are included for educational, informational, and historical context.
+        </p>
       </section>
 
       <SiteFooter className="history-footer" />
