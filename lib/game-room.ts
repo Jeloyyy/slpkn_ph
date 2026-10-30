@@ -96,7 +96,11 @@ export function getPlayerForToken(room: RoomRow, token: string): Player | null {
 export function getPublicRoom(room: RoomRow, player: Player | "spectator"): PublicRoom {
   const board = room.board.map((row) =>
     row.map((piece) => {
-      if (!piece || (player !== "spectator" && piece.owner === player)) return piece;
+      if (
+        !piece ||
+        room.phase === "finished" ||
+        (player !== "spectator" && piece.owner === player)
+      ) return piece;
       return { owner: piece.owner, hidden: true as const };
     }),
   );

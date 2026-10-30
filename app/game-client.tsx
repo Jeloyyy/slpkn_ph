@@ -369,7 +369,10 @@ export default function GameClient() {
 
       const query = new URLSearchParams(window.location.search);
       const roomId = query.get("room");
-      if (!roomId) return;
+      if (!roomId) {
+        if (query.get("rooms") === "1") setScreen("rooms");
+        return;
+      }
       const invitation = query.get("invite") ?? "";
       if (query.get("watch") === "1") {
         void openSpectatorRoom(roomId);
@@ -1081,6 +1084,7 @@ export default function GameClient() {
   function renderBoard() {
     const activeBoard = isOnline && onlineRoom ? onlineRoom.board : board;
     const isSpectator = isOnline && onlineRoom?.youAre === "spectator";
+    const revealAllPieces = screen === "finished" || onlineRoom?.phase === "finished";
     return (
       <div className="board-frame">
         <div className="board-coordinate board-top" aria-hidden="true">
@@ -1095,7 +1099,7 @@ export default function GameClient() {
               Array.from({ length: 9 }, (_, displayCol) => {
                 const position = toBoardPosition(displayRow, displayCol);
                 const piece = activeBoard[position.row][position.col] as BoardCell;
-                const isHiddenOpponent = piece && (
+                const isHiddenOpponent = piece && !revealAllPieces && (
                   "hidden" in piece ||
                   (isOnline
                     ? onlineRoom?.youAre === "spectator" || piece.owner !== onlineRoom?.youAre
@@ -1576,16 +1580,16 @@ export default function GameClient() {
             </>
           ) : (
             <>
-              <div className="sidebar-heading"><span className="eyebrow">{screen === "watching" ? "SPECTATOR FIELD REPORT" : "FIELD REPORT"}</span><h2>{screen === "finished" ? "Match results" : screen === "watching" ? "Watching match" : "The battle"}</h2><p>{screen === "watching" ? "Every piece stays identical on the board. Only captured pieces are revealed in each player's captured list." : screen === "finished" ? "A well-played game. Ready for another?" : "Ranks stay hidden until a piece enters battle. Think ahead, and remember what you discover."}</p></div>
+              <div className="sidebar-heading"><span className="eyebrow">{screen === "watching" ? "SPECTATOR FIELD REPORT" : "FIELD REPORT"}</span><h2>{screen === "finished" ? "Match results" : screen === "watching" ? "Watching match" : "The battle"}</h2><p>{screen === "watching" ? "Every piece stays identical on the board. Only captured pieces are revealed in each player's captured list." : screen === "finished" ? "The remaining ranks are revealed. A well-played game—ready for another?" : "Ranks stay hidden until a piece enters battle. Think ahead, and remember what you discover."}</p></div>
               <div className="player-card">
                 <div className={`player-avatar player-${activePlayer}`}>{activePlayer === 1 ? "I" : "II"}</div>
-                <div><strong>{activePlayerName}</strong><span>{screen === "finished" ? "Finished" : "Active turn"}</span></div>
-                <span className="active-pill">{screen === "finished" ? "DONE" : screen === "watching" ? "LIVE" : "ACTIVE"}</span>
+                <div><strong>{activePlayerName}</strong><span>{screen === "finished" ? "Attacking" : "Active turn · attacking"}</span></div>
+                <span className="active-pill">{screen === "finished" ? "ATTACKING" : screen === "watching" ? "LIVE" : "ACTIVE"}</span>
               </div>
               <div className="player-card player-card-muted">
                 <div className={`player-avatar player-${activePlayer === 1 ? 2 : 1}`}>{activePlayer === 1 ? "II" : "I"}</div>
-                <div><strong>{onlineRoom?.players[activePlayer === 1 ? 1 : 0] ?? `Player ${activePlayer === 1 ? 2 : 1}`}</strong><span>Opponent</span></div>
-                <span className="secret-status">HIDDEN</span>
+                <div><strong>{onlineRoom?.players[activePlayer === 1 ? 1 : 0] ?? `Player ${activePlayer === 1 ? 2 : 1}`}</strong><span>{screen === "finished" ? "Defending" : "Opponent · defending"}</span></div>
+                <span className="secret-status">DEFENDING</span>
               </div>
               <div className="last-move-card" aria-live="polite">
                 <span className="eyebrow">LATEST MOVE</span>

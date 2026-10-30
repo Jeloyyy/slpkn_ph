@@ -35,8 +35,8 @@ export default function HistoryPage() {
           <Link className="history-nav-link history-nav-current" href="/history" aria-current="page">
             Game history
           </Link>
-          <Link className="button-primary history-play-link" href="/">
-            Back to game <span aria-hidden="true">↗</span>
+          <Link className="button-primary history-play-link" href="/?rooms=1">
+            Challenge rooms <span aria-hidden="true">↗</span>
           </Link>
         </nav>
       </header>
