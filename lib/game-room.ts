@@ -21,6 +21,8 @@ import type {
 } from "@/app/room-types";
 
 type SetupPiece = { row: number; col: number; kind: PieceKind };
+export const ROOM_PRESENCE_STALE_SECONDS = 15;
+export const UNTIMED_DISCONNECT_GRACE_SECONDS = 30 * 60;
 
 export type RoomRow = {
   room_id: string;
@@ -44,13 +46,15 @@ export type RoomRow = {
   phase: RoomPhase;
   turn: Player;
   winner: Player | null;
-  win_reason: "flag-captured" | "flagged" | "surrender" | "timeout" | null;
+  win_reason: "flag-captured" | "flagged" | "surrender" | "timeout" | "disconnect" | null;
   move_count: number;
   last_move: PublicLastMove | null;
   time_control_seconds: number | null;
   clock1_ms: number | null;
   clock2_ms: number | null;
   clock_started_at: string | null;
+  player1_disconnected_at: string | null;
+  player2_disconnected_at: string | null;
   version: number;
   updated_at: string;
 };
@@ -124,8 +128,18 @@ export function getPublicRoom(room: RoomRow, player: Player | "spectator"): Publ
     timeControlSeconds: room.time_control_seconds,
     clocksMs: [room.clock1_ms, room.clock2_ms],
     clockStartedAt: room.clock_started_at,
+    disconnectedUntil: [
+      getDisconnectDeadline(room.player1_disconnected_at, room.time_control_seconds),
+      getDisconnectDeadline(room.player2_disconnected_at, room.time_control_seconds),
+    ],
     youAre: player,
   };
+}
+
+function getDisconnectDeadline(disconnectedAt: string | null, timeControlSeconds: number | null) {
+  if (!disconnectedAt) return null;
+  const graceSeconds = timeControlSeconds ?? UNTIMED_DISCONNECT_GRACE_SECONDS;
+  return new Date(Date.parse(disconnectedAt) + graceSeconds * 1000).toISOString();
 }
 
 export function getRoomSummary(room: RoomRow): RoomSummary {
@@ -158,6 +172,193 @@ export async function findRoom(roomId: string): Promise<RoomRow | null> {
   return (rows[0] as RoomRow | undefined) ?? null;
 }
 
+export function isValidVisitorId(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+export async function recordRoomPresence(
+  room: RoomRow,
+  visitorId: string,
+  player: Player | null,
+): Promise<RoomRow | null> {
+  const sql = getDatabase();
+  let activeRoom = room;
+  if (player !== null) {
+    const stalePresence = await sql`
+      SELECT visitor_id
+      FROM room_presence
+      WHERE room_id = ${room.room_id} AND player = ${player}
+        AND last_seen_at <= now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+      LIMIT 1
+    `;
+    if (stalePresence.length > 0) {
+      const refreshedRoom = await refreshRoomPresence(room.room_id);
+      if (!refreshedRoom) return null;
+      activeRoom = refreshedRoom;
+    }
+  }
+
+  const disconnectedAt = player === 1
+    ? activeRoom.player1_disconnected_at
+    : player === 2
+      ? activeRoom.player2_disconnected_at
+      : null;
+  const graceSeconds = activeRoom.time_control_seconds ?? UNTIMED_DISCONNECT_GRACE_SECONDS;
+  if (
+    disconnectedAt &&
+    Date.now() - Date.parse(disconnectedAt) >= graceSeconds * 1000
+  ) {
+    return refreshRoomPresence(activeRoom.room_id);
+  }
+
+  const rows = await sql`
+    INSERT INTO room_presence (room_id, visitor_id, player, last_seen_at)
+    VALUES (${activeRoom.room_id}, ${visitorId}, ${player}, now())
+    ON CONFLICT (room_id, visitor_id) DO UPDATE
+    SET player = EXCLUDED.player, last_seen_at = now()
+    WHERE room_presence.last_seen_at < now() - interval '4 seconds'
+    RETURNING visitor_id
+  `;
+  return rows.length > 0 ? refreshRoomPresence(activeRoom.room_id) : activeRoom;
+}
+
+export async function leaveRoomPresence(
+  roomId: string,
+  visitorId: string,
+  playerIsLeaving: boolean,
+) {
+  const sql = getDatabase();
+  await sql`
+    DELETE FROM room_presence
+    WHERE room_id = ${roomId} AND visitor_id = ${visitorId}
+  `;
+  const active = await sql`
+    SELECT visitor_id
+    FROM room_presence
+    WHERE room_id = ${roomId}
+      AND last_seen_at > now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+    LIMIT 1
+  `;
+  if (active.length === 0) {
+    const room = await findRoom(roomId);
+    if (!room || room.phase === "finished" || playerIsLeaving) {
+      await sql`DELETE FROM game_rooms WHERE room_id = ${roomId}`;
+      return null;
+    }
+  }
+  return refreshRoomPresence(roomId);
+}
+
+export async function refreshRoomPresence(roomId: string): Promise<RoomRow | null> {
+  const sql = getDatabase();
+  const updated = await sql`
+    UPDATE game_rooms AS room
+    SET player1_disconnected_at = CASE
+          WHEN EXISTS (
+            SELECT 1 FROM room_presence
+            WHERE room_id = room.room_id AND player = 1
+              AND last_seen_at > now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+          ) THEN NULL
+          ELSE COALESCE(
+            room.player1_disconnected_at,
+            (SELECT MAX(last_seen_at) FROM room_presence
+              WHERE room_id = room.room_id AND player = 1),
+            now()
+          )
+        END,
+        player2_disconnected_at = CASE
+          WHEN room.player2_token_hash IS NULL THEN NULL
+          WHEN EXISTS (
+            SELECT 1 FROM room_presence
+            WHERE room_id = room.room_id AND player = 2
+              AND last_seen_at > now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+          ) THEN NULL
+          ELSE COALESCE(
+            room.player2_disconnected_at,
+            (SELECT MAX(last_seen_at) FROM room_presence
+              WHERE room_id = room.room_id AND player = 2),
+            now()
+          )
+        END,
+        version = version + 1,
+        updated_at = now()
+    WHERE room.room_id = ${roomId}
+      AND room.phase <> 'finished'
+      AND (
+        (EXISTS (
+          SELECT 1 FROM room_presence
+          WHERE room_id = room.room_id AND player = 1
+            AND last_seen_at > now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+        ) AND room.player1_disconnected_at IS NOT NULL)
+        OR
+        (NOT EXISTS (
+          SELECT 1 FROM room_presence
+          WHERE room_id = room.room_id AND player = 1
+            AND last_seen_at > now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+        ) AND room.player1_disconnected_at IS NULL)
+        OR
+        (room.player2_token_hash IS NOT NULL AND EXISTS (
+          SELECT 1 FROM room_presence
+          WHERE room_id = room.room_id AND player = 2
+            AND last_seen_at > now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+        ) AND room.player2_disconnected_at IS NOT NULL)
+        OR
+        (room.player2_token_hash IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM room_presence
+          WHERE room_id = room.room_id AND player = 2
+            AND last_seen_at > now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+        ) AND room.player2_disconnected_at IS NULL)
+      )
+    RETURNING room.*
+  `;
+
+  let room = (updated[0] as RoomRow | undefined) ?? await findRoom(roomId);
+  if (!room) return null;
+
+  const graceSeconds = room.time_control_seconds ?? UNTIMED_DISCONNECT_GRACE_SECONDS;
+  const now = Date.now();
+  const expiredDisconnects = [
+    { player: 1 as const, since: room.player1_disconnected_at },
+    { player: 2 as const, since: room.player2_disconnected_at },
+  ]
+    .filter(
+      (disconnect): disconnect is { player: Player; since: string } =>
+        disconnect.since !== null &&
+        now - Date.parse(disconnect.since) >= graceSeconds * 1000,
+    )
+    .sort((left, right) => Date.parse(left.since) - Date.parse(right.since));
+
+  if (room.phase !== "finished" && expiredDisconnects.length > 0) {
+    room.phase = "finished";
+    room.winner = expiredDisconnects[0].player === 1 ? 2 : 1;
+    room.win_reason = "disconnect";
+    room.clock_started_at = null;
+    await updateRoom(room);
+    room = await findRoom(roomId);
+    if (!room) return null;
+  }
+
+  await sql`
+    DELETE FROM room_presence
+    WHERE room_id = ${roomId}
+      AND last_seen_at <= now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+  `;
+  const active = await sql`
+    SELECT visitor_id
+    FROM room_presence
+    WHERE room_id = ${roomId}
+      AND last_seen_at > now() - (${ROOM_PRESENCE_STALE_SECONDS} * interval '1 second')
+    LIMIT 1
+  `;
+
+  if (active.length === 0 && room.phase === "finished") {
+    await sql`DELETE FROM game_rooms WHERE room_id = ${roomId}`;
+    return null;
+  }
+  return room;
+}
+
 export async function updateRoom(room: RoomRow) {
   const sql = getDatabase();
   const rows = await sql`
@@ -183,6 +384,8 @@ export async function updateRoom(room: RoomRow) {
         clock1_ms = ${room.clock1_ms},
         clock2_ms = ${room.clock2_ms},
         clock_started_at = ${room.clock_started_at},
+        player1_disconnected_at = ${room.player1_disconnected_at},
+        player2_disconnected_at = ${room.player2_disconnected_at},
         version = version + 1,
         updated_at = now()
     WHERE room_id = ${room.room_id} AND version = ${room.version}
@@ -228,6 +431,8 @@ export function createInitialRoom(
     clock1_ms: timeControlSeconds === null ? null : timeControlSeconds * 1000,
     clock2_ms: timeControlSeconds === null ? null : timeControlSeconds * 1000,
     clock_started_at: null,
+    player1_disconnected_at: null,
+    player2_disconnected_at: null,
     version: 0,
     updated_at: new Date().toISOString(),
   };

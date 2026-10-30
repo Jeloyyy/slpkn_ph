@@ -26,9 +26,19 @@ type BoardCell = Piece | PublicPiece | null;
 type RoomCredentials = { token: string; player: Player };
 
 const ROOM_POLL_INTERVAL = 800;
+const ROOM_PRESENCE_INTERVAL = 5000;
 
 function roomStorageKey(roomId: string) {
   return `slpkn-room:${roomId}`;
+}
+
+function getRoomVisitorId(roomId: string) {
+  const key = `slpkn-room-visitor:${roomId}`;
+  const existing = window.sessionStorage.getItem(key);
+  if (existing) return existing;
+  const visitorId = window.crypto.randomUUID();
+  window.sessionStorage.setItem(key, visitorId);
+  return visitorId;
 }
 
 function screenForRoom(room: PublicRoom): Screen {
@@ -85,6 +95,24 @@ export default function GameClient() {
   const onlineRoomRef = useRef<PublicRoom | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const timeoutRequestRef = useRef<{ version: number; retryAt: number } | null>(null);
+  const presenceHeartbeatAtRef = useRef(new Map<string, number>());
+
+  const getRoomPresenceHeaders = useCallback((roomId: string, force = false): Record<string, string> => {
+    const now = Date.now();
+    const lastHeartbeat = presenceHeartbeatAtRef.current.get(roomId) ?? 0;
+    if (!force && now - lastHeartbeat < ROOM_PRESENCE_INTERVAL) return {};
+    presenceHeartbeatAtRef.current.set(roomId, now);
+    return {
+      "X-Room-Visitor-Id": getRoomVisitorId(roomId),
+      "X-Room-Presence": "1",
+    };
+  }, []);
+  const opponentIndex = onlineRoom?.youAre === 1 ? 1 : 0;
+  const disconnectNotice = onlineRoom &&
+    onlineRoom.youAre !== "spectator" &&
+    onlineRoom.players[opponentIndex]
+    ? onlineRoom.disconnectedUntil[opponentIndex]
+    : null;
 
   const playMoveSound = useCallback(() => {
     if (typeof window === "undefined" || !window.AudioContext) return;
@@ -286,6 +314,7 @@ export default function GameClient() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "X-Room-Visitor-Id": getRoomVisitorId(onlineRoom.roomId),
             Authorization: `Bearer ${playerToken}`,
           },
           body: JSON.stringify({ type: "claim-timeout" }),
@@ -307,6 +336,28 @@ export default function GameClient() {
       }
     })();
   }, [clockNow, isOnline, onlineRoom, playerToken]);
+
+  const openSpectatorRoom = useCallback(async (roomId: string) => {
+    try {
+      const response = await fetch(`/api/rooms/${roomId}?watch=1`, {
+        cache: "no-store",
+        headers: getRoomPresenceHeaders(roomId, true),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(getErrorMessage(result, "Could not watch this room."));
+      const room = result as PublicRoom;
+      onlineRoomRef.current = room;
+      setOnlineRoom(room);
+      setPlayerToken(null);
+      setIsOnline(true);
+      setScreen("watching");
+      window.history.replaceState({}, "", `/?room=${encodeURIComponent(roomId)}&watch=1`);
+      setRoomError("");
+    } catch (error) {
+      setRoomError(error instanceof Error ? error.message : "Could not watch this room.");
+      setScreen("rooms");
+    }
+  }, [getRoomPresenceHeaders]);
 
   useEffect(() => {
     let active = true;
@@ -332,7 +383,10 @@ export default function GameClient() {
           if (typeof credentials.token === "string" && (credentials.player === 1 || credentials.player === 2)) {
             const response = await fetch(`/api/rooms/${roomId}`, {
               cache: "no-store",
-              headers: { Authorization: `Bearer ${credentials.token}` },
+              headers: {
+                Authorization: `Bearer ${credentials.token}`,
+                ...getRoomPresenceHeaders(roomId, true),
+              },
             });
             const result: unknown = await response.json();
             if (!response.ok) throw new Error(getErrorMessage(result, "Could not open this room."));
@@ -367,7 +421,7 @@ export default function GameClient() {
     };
     void initialize();
     return () => { active = false; };
-  }, []);
+  }, [getRoomPresenceHeaders, openSpectatorRoom]);
 
   const refreshRoomList = useCallback(async () => {
     setRoomListRefreshing(true);
@@ -402,7 +456,10 @@ export default function GameClient() {
           `/api/rooms/${onlineRoom.roomId}${watch ? "?watch=1" : ""}`,
           {
             cache: "no-store",
-            headers: playerToken ? { Authorization: `Bearer ${playerToken}` } : {},
+            headers: {
+              ...(playerToken ? { Authorization: `Bearer ${playerToken}` } : {}),
+              ...getRoomPresenceHeaders(onlineRoom.roomId),
+            },
           },
         );
         const result: unknown = await response.json();
@@ -425,13 +482,47 @@ export default function GameClient() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [applyRoomSnapshot, isOnline, onlineRoom, playerToken, screen]);
+  }, [applyRoomSnapshot, getRoomPresenceHeaders, isOnline, onlineRoom, playerToken, screen]);
+
+  useEffect(() => {
+    if (!isOnline || !onlineRoom) return;
+    const roomId = onlineRoom.roomId;
+    const isSpectator = onlineRoom.youAre === "spectator";
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const notifyRoomLeave = () => {
+      const headers: Record<string, string> = {
+        "X-Room-Visitor-Id": getRoomVisitorId(roomId),
+      };
+      if (playerToken) headers.Authorization = `Bearer ${playerToken}`;
+      const watch = isSpectator ? "?watch=1" : "";
+      void fetch(`/api/rooms/${roomId}/leave${watch}`, {
+        method: "POST",
+        headers,
+        keepalive: true,
+      }).catch((error: unknown) => {
+        console.error("Could not notify the room about this tab closing.", error);
+      });
+    };
+
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    window.addEventListener("pagehide", notifyRoomLeave);
+    return () => {
+      window.removeEventListener("beforeunload", warnBeforeLeaving);
+      window.removeEventListener("pagehide", notifyRoomLeave);
+    };
+  }, [isOnline, onlineRoom, playerToken]);
 
   async function openPlayerRoom(roomId: string, token: string) {
     try {
       const response = await fetch(`/api/rooms/${roomId}`, {
         cache: "no-store",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...getRoomPresenceHeaders(roomId, true),
+        },
       });
       const result: unknown = await response.json();
       if (!response.ok) throw new Error(getErrorMessage(result, "Could not open this room."));
@@ -448,25 +539,6 @@ export default function GameClient() {
       window.history.replaceState({}, "", `/?room=${encodeURIComponent(roomId)}`);
     } catch (error) {
       setRoomError(error instanceof Error ? error.message : "Could not open this room.");
-      setScreen("rooms");
-    }
-  }
-
-  async function openSpectatorRoom(roomId: string) {
-    try {
-      const response = await fetch(`/api/rooms/${roomId}?watch=1`, { cache: "no-store" });
-      const result: unknown = await response.json();
-      if (!response.ok) throw new Error(getErrorMessage(result, "Could not watch this room."));
-      const room = result as PublicRoom;
-      onlineRoomRef.current = room;
-      setOnlineRoom(room);
-      setPlayerToken(null);
-      setIsOnline(true);
-      setScreen("watching");
-      window.history.replaceState({}, "", `/?room=${encodeURIComponent(roomId)}&watch=1`);
-      setRoomError("");
-    } catch (error) {
-      setRoomError(error instanceof Error ? error.message : "Could not watch this room.");
       setScreen("rooms");
     }
   }
@@ -625,6 +697,7 @@ export default function GameClient() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Room-Visitor-Id": getRoomVisitorId(onlineRoom.roomId),
           Authorization: `Bearer ${playerToken}`,
         },
         body: JSON.stringify(action),
@@ -661,7 +734,36 @@ export default function GameClient() {
     }
   }
 
-  function exitOnlineRoom() {
+  async function exitOnlineRoom() {
+    if (!onlineRoom) return;
+    const graceMinutes = onlineRoom.timeControlSeconds === null
+      ? 30
+      : onlineRoom.timeControlSeconds / 60;
+    const gracePeriod = `${graceMinutes} ${graceMinutes === 1 ? "minute" : "minutes"}`;
+    const warning = onlineRoom.youAre === "spectator"
+      ? "Leave this room? The room stays open while other visitors are present."
+      : `Leave this room? You can return within ${gracePeriod}; otherwise you forfeit. The room is deleted after everyone has left and the reconnect period ends.`;
+    if (!window.confirm(warning)) return;
+
+    const headers: Record<string, string> = {
+      "X-Room-Visitor-Id": getRoomVisitorId(onlineRoom.roomId),
+    };
+    if (playerToken) headers.Authorization = `Bearer ${playerToken}`;
+    const watch = onlineRoom.youAre === "spectator" ? "?watch=1" : "";
+    try {
+      const response = await fetch(`/api/rooms/${onlineRoom.roomId}/leave${watch}`, {
+        method: "POST",
+        headers,
+      });
+      if (!response.ok && response.status !== 404) {
+        const result: unknown = await response.json();
+        throw new Error(getErrorMessage(result, "Could not leave the room."));
+      }
+    } catch (error) {
+      setRoomError(error instanceof Error ? error.message : "Could not leave the room.");
+      return;
+    }
+
     setIsOnline(false);
     onlineRoomRef.current = null;
     setOnlineRoom(null);
@@ -946,7 +1048,11 @@ export default function GameClient() {
     return (
       <span className={`piece-hidden piece-back-player-${owner}`} aria-hidden="true">
         <svg viewBox="0 0 64 64" focusable="false">
-          <path d="M42 7c-10 0-17 7-18 17l-1 7c-4 2-6 6-5 10 1 3 3 5 6 6l-1 6-8 9 15-5c5 2 9 4 14 4 7 0 13-3 17-7l-4-5 5-4-3-4 5-4-7-4-2-6C55 15 50 7 42 7Zm-12 8c5-5 16-6 23 0l6 8-11-3-4-7-5 9-16-2 7-5Z" />
+          <path d="M32 5c-11 0-19 8-19 21l-5 5 5 4v9c0 7 5 13 12 16v3L14 59v3h36v-3L39 56v-3c7-3 12-9 12-16v-9C51 13 43 5 32 5Z" />
+          <path d="M13 28c8-4 30-4 38 0l-2 5H15Z" className="piece-back-helmet-band" />
+          <path d="M19 33h26v7c0 8-5 13-13 13s-13-5-13-13Z" className="piece-back-face" />
+          <path d="M24 39h4v2h-4zm12 0h4v2h-4z" className="piece-back-face-detail" />
+          <path d="m27 52 5 3 5-3v4l-5 3-5-3Z" className="piece-back-uniform-detail" />
         </svg>
       </span>
     );
@@ -1370,7 +1476,9 @@ export default function GameClient() {
                               : `${onlineRoom?.players[(onlineRoom?.turn ?? 1) - 1] ?? playerName(onlineRoom?.turn ?? 1)}'s turn`
                             : `${activePlayerName}${isSetup ? " · arranging army" : " · your turn"}`}
               </strong>
-              <span>{roomError || (onlineRoom?.phase === "setup" && !onlineRoom.players[1]
+              <span>{roomError || (disconnectNotice
+                ? `${onlineRoom?.players[opponentIndex]} disconnected. Reconnect by ${new Date(disconnectNotice).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} to avoid forfeiting.`
+                : onlineRoom?.phase === "setup" && !onlineRoom.players[1]
                 ? "Waiting for an opponent to join this room."
                 : screen === "watching"
                   ? "Pieces are identical to keep both armies' ranks secret."
@@ -1519,7 +1627,7 @@ export default function GameClient() {
                     ? "Waiting for opponent..."
                     : opponentRematchRequested
                       ? "Accept rematch"
-                      : "Restore armies for setup"}
+                      : "Rematch"}
                   <span aria-hidden="true">↗</span>
                 </button>
               )}
@@ -1557,7 +1665,9 @@ export default function GameClient() {
                 ? "THE OPPONENT SURRENDERED"
                 : winReason === "timeout"
                   ? "TIME EXPIRED"
-                  : "OPPONENT'S FLAG CAPTURED"}
+                    : winReason === "disconnect"
+                      ? "OPPONENT DID NOT RECONNECT IN TIME"
+                    : "OPPONENT'S FLAG CAPTURED"}
           </p>
           <div className="victory-divider"><span>✦</span></div>
           <div className="victory-actions">

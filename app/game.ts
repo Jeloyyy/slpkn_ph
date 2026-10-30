@@ -19,7 +19,7 @@ export type PieceKind =
 export type Piece = { kind: PieceKind; owner: Player };
 export type Board = (Piece | null)[][];
 export type PieceCounts = Record<PieceKind, number>;
-export type WinReason = "flag-captured" | "flagged" | "surrender" | "timeout";
+export type WinReason = "flag-captured" | "flagged" | "surrender" | "timeout" | "disconnect";
 
 export const PIECES: {
   kind: PieceKind;

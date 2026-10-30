@@ -17,17 +17,19 @@ Online rooms use Neon Postgres to store the board, clocks, and latest move. Both
 
 1. Create a Neon project and copy its pooled connection string.
 2. Set `DATABASE_URL` in `.env.local` for local development and in the Vercel project's environment variables for deployment. `.env.example` shows the expected format.
-3. Run [`db/schema.sql`](./db/schema.sql) in the Neon SQL Editor to create or update the room table. Re-run it after app updates that add database columns.
+3. Run [`db/schema.sql`](./db/schema.sql) in the Neon SQL Editor to create or update the room and presence tables. Re-run it after app updates that add database columns.
 4. Add a private `CRON_SECRET` environment variable in Vercel. Use a long random value; the daily cleanup job uses it to authorize its request.
 5. Deploy the app. Players can then create public rooms for the challenge lobby or private rooms with invite links. Public matches can be watched without joining.
 
 Players choose guest names; a random room credential is kept in that browser's local storage. Private invitation links grant access to the second seat, so only share those links with the intended opponent. Each player continues to see their own piece ranks during the opponent's turn; their opponent's ranks remain hidden. Public spectators see identical markers for every piece on the board, plus the captured pieces displayed for each player. After a match, both players can agree to rematch; the saved formations are restored to setup so either player can edit their own army and reconfirm before play starts. Private rooms are neither listed nor watchable.
 
-Rooms can be untimed or use a 5-minute, 10-minute, or custom 1–60-minute clock per player. Each clock runs only during that player's turn; reaching zero awards the win to the opponent. While an online room remains open in a browser tab, the tab title changes to “Your turn” when it becomes your turn and the game plays its move sound. This does not request notification permission or use push notifications; browsers may suspend background tabs, so it is not a guaranteed alert if the browser/device is paused or closed.
+Rooms can be untimed or use a 5-minute, 10-minute, or custom 1–60-minute clock per player. Each clock runs only during that player's turn; reaching zero awards the win to the opponent. A disconnected player has the selected clock length to reconnect, or 30 minutes in an untimed room, before forfeiting. Leaving the room prompts for confirmation; when the last player deliberately leaves, the room is deleted immediately. The game tracks active player and spectator tabs and removes finished rooms when everyone leaves.
+
+While an online room remains open in a browser tab, the tab title changes to “Your turn” when it becomes your turn and the game plays its move sound. This does not request notification permission or use push notifications; browsers may suspend background tabs, so it is not a guaranteed alert if the browser/device is paused or closed.
 
 The [game history page](./app/history/page.tsx) introduces the Filipino origins of Game of the Generals and credits Sofronio “Ronnie” Pasola, with links to its historical sources.
 
-The daily Vercel Cron job removes up to 500 stale rooms per run: waiting, setup, and finished rooms after 24 hours without activity, and games still marked as playing after 7 days without activity. Current games remain available during that window.
+The daily Vercel Cron job removes up to 500 stale rooms per run: rooms whose disconnected-player grace has expired, waiting/setup/finished rooms after 24 hours without activity, and games still marked as playing after 7 days without activity. Vercel Hobby cron schedules run daily, so an abandoned room with no subsequent requests may remain in the database until the next scheduled cleanup; rooms are reconciled on room polling and removed immediately when the last player explicitly leaves.
 
 Online rooms are stored in the database, and guest identity is browser-local rather than account-based. Keep the Neon connection string on the server; do not expose it as a `NEXT_PUBLIC_` variable.
 

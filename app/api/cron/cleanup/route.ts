@@ -19,11 +19,28 @@ export async function GET(request: Request) {
     const deleted = await sql`
       WITH expired_rooms AS (
         SELECT room_id
-        FROM game_rooms
-        WHERE (
-          phase <> 'playing'
-          AND updated_at < now() - interval '24 hours'
-        ) OR updated_at < now() - interval '7 days'
+        FROM game_rooms AS room
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM room_presence
+          WHERE room_presence.room_id = room.room_id
+            AND last_seen_at > now() - interval '15 seconds'
+        ) AND (
+          (
+            phase <> 'playing'
+            AND updated_at < now() - interval '24 hours'
+          ) OR updated_at < now() - interval '7 days'
+          OR phase = 'finished'
+          OR GREATEST(
+            COALESCE(player1_disconnected_at, '-infinity'::timestamptz),
+            COALESCE(player2_disconnected_at, '-infinity'::timestamptz),
+            COALESCE(
+              (SELECT MAX(last_seen_at) FROM room_presence
+                WHERE room_presence.room_id = room.room_id),
+              created_at
+            )
+          ) <= now() - (COALESCE(time_control_seconds, 1800) * interval '1 second')
+        )
         ORDER BY updated_at ASC
         LIMIT 500
       )

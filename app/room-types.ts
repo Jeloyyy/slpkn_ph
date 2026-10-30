@@ -35,6 +35,7 @@ export type PublicRoom = {
   timeControlSeconds: number | null;
   clocksMs: [number | null, number | null];
   clockStartedAt: string | null;
+  disconnectedUntil: [string | null, string | null];
   youAre: Player | "spectator";
 };
 

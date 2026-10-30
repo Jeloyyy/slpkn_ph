@@ -1233,16 +1233,31 @@ a:focus-visible {
 .piece-back-player-1 {
   background: #eee9dc;
   color: #171815;
+  --piece-back-detail: #eee9dc;
 }
 
 .piece-back-player-2 {
   background: #22241f;
   color: #f0ecdf;
+  --piece-back-detail: #22241f;
 }
 
 .piece-hidden svg {
   width: 61%;
-  height: 79%;
+  height: 88%;
+  fill: currentColor;
+}
+
+.piece-back-helmet-band {
+  fill: var(--piece-back-detail);
+}
+
+.piece-back-face,
+.piece-back-uniform-detail {
+  fill: var(--piece-back-detail);
+}
+
+.piece-back-face-detail {
   fill: currentColor;
 }
 
