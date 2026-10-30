@@ -38,7 +38,7 @@ Online rooms are stored in the database, and guest identity is browser-local rat
 - Two players share one device and take turns arranging their armies.
 - Each player places all 21 pieces in the three rows closest to them. Player 2 sees the board from the opposite side.
 - Opponent ranks are concealed during play. A piece moves one square in any direction, including diagonally.
-- In battle, the higher-ranked piece wins. The Spy defeats every rank except the Private; equal ranks remove both pieces.
+- In battle, the higher-ranked piece wins. The Spy defeats every rank except the Private; equal ranks, including Spy versus Spy, remove both pieces.
 - Capture the opponent's Flag or move your Flag to the far edge to win. A player may also surrender.
 
 Local hot-seat play is still available from the landing page. Online play uses the room lobby and does not require an account.

@@ -58,6 +58,7 @@ export function allPiecesPlaced(counts: PieceCounts): boolean {
 }
 
 export function combatWinner(attacker: Piece, defender: Piece): Piece | null {
+  if (attacker.kind === "S" && defender.kind === "S") return null;
   if (attacker.kind === "F") return defender;
   if (defender.kind === "F") return attacker;
   if (attacker.kind === "S") return defender.kind === "P" ? defender : attacker;
