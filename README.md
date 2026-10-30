@@ -1,6 +1,6 @@
 # SLPKN PH
 
-A browser-based version of SLPKN PH (Salpakan), inspired by Game of the Generals. It is built with Next.js, React, and TypeScript and can be deployed to Vercel.
+A browser-based version of SLPKN PH (Salpakan), inspired by the Filipino game Game of the Generals, created by Sofronio “Ronnie” Pasola. It is built with Next.js, React, and TypeScript and can be deployed to Vercel.
 
 ## Run locally
 

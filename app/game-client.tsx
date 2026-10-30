@@ -942,10 +942,20 @@ export default function GameClient() {
     void sendOnlineAction({ type: "rematch" });
   }
 
+  function renderHiddenPiece(owner: Player) {
+    return (
+      <span className={`piece-hidden piece-back-player-${owner}`} aria-hidden="true">
+        <svg viewBox="0 0 64 64" focusable="false">
+          <path d="M42 7c-10 0-17 7-18 17l-1 7c-4 2-6 6-5 10 1 3 3 5 6 6l-1 6-8 9 15-5c5 2 9 4 14 4 7 0 13-3 17-7l-4-5 5-4-3-4 5-4-7-4-2-6C55 15 50 7 42 7Zm-12 8c5-5 16-6 23 0l6 8-11-3-4-7-5 9-16-2 7-5Z" />
+        </svg>
+      </span>
+    );
+  }
+
   function displayPiece(piece: BoardCell) {
     if (!piece) return null;
     if ("hidden" in piece) {
-      return <span className="piece-hidden spectator-piece" aria-label="Hidden piece" />;
+      return renderHiddenPiece(piece.owner);
     }
     const definition = PIECES.find((item) => item.kind === piece.kind);
     return (
@@ -1028,7 +1038,7 @@ export default function GameClient() {
                     onClick={() => isSetup ? onSetupSquare(position) : onGameSquare(position)}
                   >
                     {isHiddenOpponent ? (
-                      <span className="piece-hidden" aria-hidden="true">✦</span>
+                      renderHiddenPiece(piece?.owner ?? activePlayer)
                     ) : (
                       displayPiece(piece)
                     )}
@@ -1240,7 +1250,7 @@ export default function GameClient() {
             <span className="eyebrow"><span className="eyebrow-line" /> A FILIPINO STRATEGY CLASSIC</span>
             <h1>Outthink.<br /><em>Outmaneuver.</em><br />Win the field.</h1>
             <p className="hero-description">
-              Lead your army in a battle of bluff, memory, and strategy. Hide your ranks, read your rival, and make every move count.
+              Lead your army in a game of bluff, memory, and strategy. Hide your ranks, read your opponent, and make every move count.
             </p>
             <div className="hero-actions">
               <button className="button-secondary" type="button" onClick={() => { setRoomError(""); setScreen("rooms"); }}>
@@ -1255,17 +1265,16 @@ export default function GameClient() {
           </div>
           <div className="hero-art" aria-label="Illustration of the SLPKN PH game board">
             <div className="art-glow" />
-            <div className="art-stamp">STRATEGY<br />MEETS<br />INSTINCT</div>
             <div className="hero-board">
               {[
-                ["", "★", "", "✦", "", "★", "", ""],
-                ["♟", "", "♜", "", "♝", "", "♟", ""],
-                ["", "♞", "", "", "", "♚", "", "♟"],
-                ["", "", "✧", "", "✧", "", "", ""],
-                ["", "", "", "✧", "", "✧", "", ""],
-                ["♟", "", "♛", "", "", "♜", "", ""],
-                ["", "♟", "", "♝", "", "♟", "", "♞"],
-                ["⚑", "", "♟", "", "♜", "", "♟", ""],
+                ["", "✦", "", "◆", "", "✦", "", "", ""],
+                ["●", "", "⬟", "", "◆", "", "●", "", ""],
+                ["", "▲", "", "", "", "⬟", "", "●", ""],
+                ["", "", "✧", "", "✧", "", "", "", ""],
+                ["", "", "", "✧", "", "✧", "", "", ""],
+                ["●", "", "◆", "", "", "⬟", "", "", ""],
+                ["", "●", "", "⬟", "", "●", "", "▲", ""],
+                ["◆", "", "●", "", "⬟", "", "●", "", ""],
               ].flatMap((row, rowIndex) =>
                 row.map((symbol, colIndex) => (
                   <div
@@ -1277,14 +1286,13 @@ export default function GameClient() {
                 )),
               )}
             </div>
-            <div className="art-caption"><span>01</span> THE BATTLEFIELD <span className="caption-line" /> 8 × 9</div>
           </div>
         </section>
         <section className="quick-stats" aria-label="Game features">
           <div><span className="stat-number">01</span><span className="stat-label">Set your<br />formation</span></div>
           <div><span className="stat-number">02</span><span className="stat-label">Conceal your<br />rank</span></div>
           <div><span className="stat-number">03</span><span className="stat-label">Capture the<br />flag</span></div>
-          <div className="stat-note">A classic game of<br /><strong>Game of the Generals</strong><br />by <strong>Sofronio “Ronnie” Pasola</strong></div>
+          <div className="stat-note">Inspired by the classic game of<br /><strong>Game of the Generals</strong><br />by <strong>Sofronio “Ronnie” Pasola</strong></div>
         </section>
         <section className="rules-section" id="how-to-play">
           <div className="rules-heading">
@@ -1295,7 +1303,7 @@ export default function GameClient() {
           <div className="rule-list">
             <article className="rule-card">
               <span className="rule-number">01</span>
-              <div><h3>Set your army</h3><p>Place all 21 pieces in the three rows closest to you. Keep your ranks secret from your opponent.</p></div>
+              <div><h3>Set your army</h3><p>Place all 21 pieces in the three rows closest to you inside the 8 × 9 battlefield. Keep your ranks secret from your opponent.</p></div>
             </article>
             <article className="rule-card">
               <span className="rule-number">02</span>
@@ -1315,7 +1323,7 @@ export default function GameClient() {
           <div><span className="eyebrow"><span className="eyebrow-line" /> THE FIELD IS YOURS</span><h2>Ready to make<br /><em>your move?</em></h2></div>
           <button className="button-primary" type="button" onClick={startGame}>Set up your army <span aria-hidden="true">↗</span></button>
         </section>
-        <footer className="site-footer"><a className="brand" href="#"><span className="brand-mark">S</span><span>SLPKN <b>PH</b></span></a><span>An educational project inspired by Game of the Generals, created by Sofronio “Ronnie” Pasola. <strong>IT Tag: JNK777</strong></span><span>Made for the love of the game.</span></footer>
+        <footer className="site-footer"><a className="brand" href="#"><span className="brand-mark">S</span><span>SLPKN <b>PH</b></span></a><span>An educational project inspired by the game named Game of the Generals, created by Sofronio “Ronnie” Pasola.<br /><strong>- JNK777</strong></span><span>Made for the love of the game.</span></footer>
       </main>
     );
   }
