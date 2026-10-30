@@ -83,13 +83,9 @@ a:focus-visible {
 .brand-mark {
   width: 31px;
   height: 31px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(214, 170, 99, 0.7);
-  color: var(--gold);
-  font-family: var(--font-display);
-  font-size: 19px;
-  font-weight: 400;
+  display: block;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .header-nav {

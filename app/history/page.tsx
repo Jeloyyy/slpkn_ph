@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
 
 export const metadata: Metadata = {
   title: "History of Game of the Generals | SLPKN PH",
@@ -25,7 +26,7 @@ export default function HistoryPage() {
     <main className="site-shell history-page">
       <header className="site-header">
         <Link className="brand" href="/" aria-label="SLPKN PH home">
-          <span className="brand-mark">S</span>
+          <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
           <span>SLPKN <b>PH</b></span>
         </Link>
         <nav className="header-nav" aria-label="Main navigation">
@@ -138,7 +139,8 @@ export default function HistoryPage() {
 
       <footer className="site-footer history-footer">
         <Link className="brand" href="/">
-          <span className="brand-mark">S</span><span>SLPKN <b>PH</b></span>
+          <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
+          <span>SLPKN <b>PH</b></span>
         </Link>
         <span>Game of the Generals was created in the Philippines by Sofronio “Ronnie” Pasola.</span>
         <Link href="/">Return to the game <span aria-hidden="true">↗</span></Link>

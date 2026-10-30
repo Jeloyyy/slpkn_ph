@@ -1171,7 +1171,8 @@ export default function GameClient() {
       <main className="site-shell rooms-shell">
         <header className="site-header">
           <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setScreen("home"); }} aria-label="SLPKN PH home">
-            <span className="brand-mark">S</span><span>SLPKN <b>PH</b></span>
+            <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
+            <span>SLPKN <b>PH</b></span>
           </a>
           <nav className="header-nav" aria-label="Main navigation">
             <button type="button" className="header-home" onClick={() => setScreen("home")}>Back home <span>↗</span></button>
@@ -1328,7 +1329,8 @@ export default function GameClient() {
         )}
         <footer className="site-footer rooms-footer">
           <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setScreen("home"); }}>
-            <span className="brand-mark">S</span><span>SLPKN <b>PH</b></span>
+            <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
+            <span>SLPKN <b>PH</b></span>
           </a>
           <span>Public matches are visible to spectators. Private rooms require an invitation.</span>
         </footer>
@@ -1341,7 +1343,7 @@ export default function GameClient() {
       <main className="site-shell">
         <header className="site-header">
           <a className="brand" href="#" aria-label="SLPKN PH home">
-            <span className="brand-mark">S</span>
+            <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
             <span>SLPKN <b>PH</b></span>
           </a>
           <nav className="header-nav" aria-label="Main navigation">
@@ -1440,7 +1442,7 @@ export default function GameClient() {
           <div><span className="eyebrow"><span className="eyebrow-line" /> THE FIELD IS YOURS</span><h2>Ready to make<br /><em>your move?</em></h2></div>
           <button className="button-primary" type="button" onClick={startGame}>Set up your army <span aria-hidden="true">↗</span></button>
         </section>
-        <footer className="site-footer"><a className="brand" href="#"><span className="brand-mark">S</span><span>SLPKN <b>PH</b></span></a><span>An educational project inspired by the game named Game of the Generals, created by Sofronio “Ronnie” Pasola.<br /><strong>- JNK777</strong></span><span>Made for the love of the game.</span></footer>
+        <footer className="site-footer"><a className="brand" href="#"><Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} /><span>SLPKN <b>PH</b></span></a><span>An educational project inspired by the game named Game of the Generals, created by Sofronio “Ronnie” Pasola.<br /><strong>- JNK777</strong></span><span>Made for the love of the game.</span></footer>
       </main>
     );
   }
@@ -1453,7 +1455,8 @@ export default function GameClient() {
     <main className="play-shell">
       <header className="play-header">
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); if (isOnline) exitOnlineRoom(); else setScreen("home"); }} aria-label="Return to home">
-          <span className="brand-mark">S</span><span>SLPKN <b>PH</b></span>
+          <Image className="brand-mark" src="/pieces/LOGO.jpg" alt="" width={36} height={36} />
+          <span>SLPKN <b>PH</b></span>
         </a>
         <div className="match-label">
           <span className="live-dot" />
