@@ -1284,7 +1284,7 @@ export default function GameClient() {
           <div><span className="stat-number">01</span><span className="stat-label">Set your<br />formation</span></div>
           <div><span className="stat-number">02</span><span className="stat-label">Conceal your<br />rank</span></div>
           <div><span className="stat-number">03</span><span className="stat-label">Capture the<br />flag</span></div>
-          <div className="stat-note">A classic game of<br /><strong>Game of the Generals</strong></div>
+          <div className="stat-note">A classic game of<br /><strong>Game of the Generals</strong><br />by <strong>Sofronio “Ronnie” Pasola</strong></div>
         </section>
         <section className="rules-section" id="how-to-play">
           <div className="rules-heading">
@@ -1315,7 +1315,7 @@ export default function GameClient() {
           <div><span className="eyebrow"><span className="eyebrow-line" /> THE FIELD IS YOURS</span><h2>Ready to make<br /><em>your move?</em></h2></div>
           <button className="button-primary" type="button" onClick={startGame}>Set up your army <span aria-hidden="true">↗</span></button>
         </section>
-        <footer className="site-footer"><a className="brand" href="#"><span className="brand-mark">S</span><span>SLPKN <b>PH</b></span></a><span>A hobby project inspired by Game of the Generals.</span><span>Made for the love of the game.</span></footer>
+        <footer className="site-footer"><a className="brand" href="#"><span className="brand-mark">S</span><span>SLPKN <b>PH</b></span></a><span>An educational project inspired by Game of the Generals, created by Sofronio “Ronnie” Pasola. <strong>IT Tag: JNK777</strong></span><span>Made for the love of the game.</span></footer>
       </main>
     );
   }

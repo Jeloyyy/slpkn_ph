@@ -758,8 +758,8 @@ a:focus-visible {
 }
 
 .stat-note strong {
-  color: #c9c1b0;
-  font-weight: 400;
+  color: #e0d4b8;
+  font-weight: 600;
 }
 
 .rules-section {
@@ -857,6 +857,13 @@ a:focus-visible {
   width: 26px;
   height: 26px;
   font-size: 15px;
+}
+
+.site-footer > span strong {
+  margin-left: 8px;
+  color: #d3bd8e;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .play-shell {
@@ -1771,8 +1778,8 @@ a:focus-visible {
 
   .hero {
     min-height: initial;
-    grid-template-columns: 1fr 0.9fr;
-    gap: 10px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
     padding: 70px 0 60px;
   }
 
@@ -1781,11 +1788,12 @@ a:focus-visible {
   }
 
   .hero-art {
-    min-height: 390px;
+    min-height: 0;
+    aspect-ratio: 1.25;
   }
 
   .hero-board {
-    width: 95%;
+    width: min(82%, 440px);
   }
 
   .rules-section {
